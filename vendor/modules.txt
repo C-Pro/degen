@@ -1,0 +1,13 @@
+# github.com/klauspost/compress v1.10.3
+## explicit; go 1.13
+github.com/klauspost/compress/flate
+# github.com/pkg/errors v0.9.1
+## explicit
+github.com/pkg/errors
+# nhooyr.io/websocket v1.8.7
+## explicit; go 1.13
+nhooyr.io/websocket
+nhooyr.io/websocket/internal/bpool
+nhooyr.io/websocket/internal/errd
+nhooyr.io/websocket/internal/wsjs
+nhooyr.io/websocket/internal/xsync
