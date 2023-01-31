@@ -4,18 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
-	"nhooyr.io/websocket"
 )
 
 type WS struct {
 	conn *websocket.Conn
+	mux  sync.Mutex
 }
 
 func (ws *WS) Connect(ctx context.Context, url string) error {
-	conn, resp, err := websocket.Dial(context.Background(), url, nil)
+	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		if resp != nil {
 			body, errR := io.ReadAll(resp.Body)
@@ -35,13 +37,14 @@ func (ws *WS) Connect(ctx context.Context, url string) error {
 
 func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
 	for {
-		_, msg, err := ws.conn.Read(ctx)
+		typ, msg, err := ws.conn.ReadMessage()
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-
 			return fmt.Errorf("websocket.Read error: %v", err)
+		}
+
+		if typ == websocket.PingMessage {
+			ws.conn.WriteMessage(websocket.PongMessage, msg)
+			continue
 		}
 
 		ch <- msg
@@ -56,5 +59,7 @@ func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
 }
 
 func (ws *WS) Write(ctx context.Context, msg []byte) error {
-	return ws.conn.Write(ctx, websocket.MessageText, msg)
+	ws.mux.Lock()
+	defer ws.mux.Unlock()
+	return ws.conn.WriteMessage(websocket.TextMessage, msg)
 }

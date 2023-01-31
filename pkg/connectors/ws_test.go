@@ -3,52 +3,34 @@ package connectors
 import (
 	"bytes"
 	"context"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"testing"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/gorilla/websocket"
 )
 
-func echo(ctx context.Context, c *websocket.Conn) error {
-	typ, r, err := c.Reader(ctx)
-	if err != nil {
-		return err
-	}
-
-	w, err := c.Writer(ctx, typ)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.Copy(w, r)
-	if err != nil {
-		return fmt.Errorf("failed to io.Copy: %w", err)
-	}
-
-	return w.Close()
-}
-
 func serve(ctx context.Context, t *testing.T) http.HandlerFunc {
+	upgrader := websocket.Upgrader{}
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := websocket.Accept(w, r, nil)
+		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			t.Error(err)
+			t.Errorf("upgrade: %v", err)
 			return
 		}
-		defer c.Close(websocket.StatusInternalError, "the sky is falling")
-
+		defer c.Close()
 		for {
-			err = echo(r.Context(), c)
-			if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
-				return
-			}
+			mt, message, err := c.ReadMessage()
 			if err != nil {
-				t.Errorf("failed to echo with %v: %v", r.RemoteAddr, err)
-				return
+				t.Errorf("read: %v", err)
+				break
+			}
+			t.Logf("recv: %s", message)
+			err = c.WriteMessage(mt, message)
+			if err != nil {
+				t.Errorf("write: %v", err)
+				break
 			}
 		}
 	}
@@ -67,7 +49,8 @@ func TestWS(t *testing.T) {
 	go func() {
 		if err := s.Serve(l); err != nil {
 			if err != http.ErrServerClosed {
-				t.Fatalf("server returner error: %v", err)
+				t.Errorf("server returner error: %v", err)
+				return
 			}
 		}
 	}()
@@ -80,7 +63,8 @@ func TestWS(t *testing.T) {
 	ch := make(chan []byte)
 	go func() {
 		if err := ws.Listen(ctx, ch); err != nil {
-			t.Fatalf("ws.Listen returned error: %v", err)
+			t.Errorf("ws.Listen returned error: %v", err)
+			return
 		}
 	}()
 
