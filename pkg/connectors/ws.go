@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/pkg/errors"
 	"nhooyr.io/websocket"
@@ -49,6 +50,7 @@ func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
 		case <-ctx.Done():
 			return nil
 		default:
+			time.Sleep(time.Millisecond)
 		}
 	}
 }
