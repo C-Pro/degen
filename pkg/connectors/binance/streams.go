@@ -71,6 +71,11 @@ func (bts *BookTickerStream) Subscribe(ctx context.Context, symbols []string) er
 	return err
 }
 
+type streamMessage struct {
+	Stream string          `json:"stream"`
+	Data   json.RawMessage `json:"data"`
+}
+
 /*{
   "u":400900217,     // order book updateId
   "s":"BNBUSDT",     // symbol
@@ -107,31 +112,48 @@ func (bts *BookTickerStream) Listen(ctx context.Context, ch chan<- models.Exchan
 	for {
 		select {
 		case msg := <-rawCh:
-			log.Printf("got msg: %s\n", string(msg))
-			var ticker bookTicker
-			if err := json.Unmarshal(msg, &ticker); err == nil && ticker.Symbol != "" {
-				ts := time.Now().UTC()
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    strings.ToLower(ticker.Symbol),
-					Timestamp: ts,
-					MsgType:   models.MsgTypeTopAsk,
-					Payload: models.PriceLevel{
-						Price: ticker.AskPrice,
-						Size:  ticker.AskSize,
-					},
-				}
+			// log.Printf("got msg: %s\n", string(msg))
+			var envelope streamMessage
+			if err := json.Unmarshal(msg, &envelope); err != nil {
+				break
+			}
 
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    strings.ToLower(ticker.Symbol),
-					Timestamp: ts,
-					MsgType:   models.MsgTypeTopBid,
-					Payload: models.PriceLevel{
-						Price: ticker.BidPrice,
-						Size:  ticker.BidSize,
-					},
+			parts := strings.Split(envelope.Stream, "@")
+			if len(parts) < 2 {
+				break
+			}
+			// symbol := strings.ToLower(parts[0])
+			streamType := parts[1]
+
+			switch streamType {
+			case "bookTicker":
+				var ticker bookTicker
+				if err := json.Unmarshal(envelope.Data, &ticker); err == nil && ticker.Symbol != "" {
+					ts := time.Now().UTC()
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    strings.ToLower(ticker.Symbol),
+						Timestamp: ts,
+						MsgType:   models.MsgTypeTopAsk,
+						Payload: models.PriceLevel{
+							Price: ticker.AskPrice,
+							Size:  ticker.AskSize,
+						},
+					}
+
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    strings.ToLower(ticker.Symbol),
+						Timestamp: ts,
+						MsgType:   models.MsgTypeTopBid,
+						Payload: models.PriceLevel{
+							Price: ticker.BidPrice,
+							Size:  ticker.BidSize,
+						},
+					}
 				}
+			default:
+				log.Printf("unknown stream type: %q", streamType)
 			}
 		case <-ctx.Done():
 			return
