@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -18,7 +19,7 @@ func main() {
 
 	ws := &connectors.WS{}
 	tctx, cancel := context.WithTimeout(ctx, time.Second*5)
-	err := ws.Connect(tctx, "wss://stream.binance.com:9443/stream")
+	err := ws.Connect(tctx, "wss://stream.binancefuture.com/stream")
 	cancel()
 	if err != nil {
 		log.Printf("failed to connect to steram: %v\n", err)
@@ -31,10 +32,17 @@ func main() {
 		close(ch)
 	}()
 
-	stream := binance.NewBookTickerStream(ws)
-	go stream.Listen(ctx, ch)
+	bnc := binance.NewBinance(
+		ctx,
+		os.Getenv("BINANCE_KEY"),
+		os.Getenv("BINANCE_SECRET"),
+		"https://testnet.binancefuture.com",
+		"wss://stream.binancefuture.com/stream",
+	)
 
-	if err := stream.Subscribe(ctx, []string{"btcusdt"}); err != nil {
+	go bnc.Listen(ctx, ch)
+
+	if err := bnc.SubscribeBookTickers(ctx, []string{"btcusdt"}); err != nil {
 		log.Printf("failed to subscribe: %v\n", err)
 		return
 	}

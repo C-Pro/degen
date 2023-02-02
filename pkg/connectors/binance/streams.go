@@ -45,19 +45,30 @@ func SendWSMsg(
 	return ws.Write(ctx, b)
 }
 
-type BookTickerStream struct {
+type Binance struct {
 	ws      *connectors.WS
+	api     *API
 	symbols []string
 	mux     sync.RWMutex
 }
 
-func NewBookTickerStream(ws *connectors.WS) *BookTickerStream {
-	return &BookTickerStream{
-		ws: ws,
+func NewBinance(
+	ctx context.Context,
+	key, secret, apiBaseURL, wsBaseURL string,
+) *Binance {
+	// TODO: proper reconnection handling
+	ws := &connectors.WS{}
+	if err := ws.Connect(ctx, wsBaseURL); err != nil {
+		panic(err)
+	}
+
+	return &Binance{
+		ws:  ws,
+		api: NewAPI(key, secret, apiBaseURL),
 	}
 }
 
-func (bts *BookTickerStream) Subscribe(ctx context.Context, symbols []string) error {
+func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) error {
 	streams := make([]string, len(symbols))
 	for i, s := range symbols {
 		streams[i] = strings.ToLower(s) + "@bookTicker"
@@ -76,15 +87,6 @@ type streamMessage struct {
 	Data   json.RawMessage `json:"data"`
 }
 
-/*{
-  "u":400900217,     // order book updateId
-  "s":"BNBUSDT",     // symbol
-  "b":"25.35190000", // best bid price
-  "B":"31.21000000", // best bid qty
-  "a":"25.36520000", // best ask price
-  "A":"40.66000000"  // best ask qty
-}*/
-
 type bookTicker struct {
 	Symbol   string          `json:"s"`
 	BidPrice decimal.Decimal `json:"b"`
@@ -93,18 +95,19 @@ type bookTicker struct {
 	AskSize  decimal.Decimal `json:"A"`
 }
 
-func (bts *BookTickerStream) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	rawCh := make(chan []byte, 100)
 	go func() {
 		for {
 			if err := bts.ws.Listen(ctx, rawCh); err != nil {
-				log.Printf("ws.Listen returned: %v\n", err)
+				log.Printf("binance.Listen returned: %v\n", err)
 			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second):
 				// wait for some time before reconnecting
+				log.Println("binance.Listen reconnecting")
 			}
 		}
 	}()
@@ -112,7 +115,7 @@ func (bts *BookTickerStream) Listen(ctx context.Context, ch chan<- models.Exchan
 	for {
 		select {
 		case msg := <-rawCh:
-			// log.Printf("got msg: %s\n", string(msg))
+			log.Printf("got msg: %s\n", string(msg))
 			var envelope streamMessage
 			if err := json.Unmarshal(msg, &envelope); err != nil {
 				break
