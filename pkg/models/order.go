@@ -61,3 +61,13 @@ type Order struct {
 	FilledSize   decimal.Decimal
 	AveragePrice decimal.Decimal
 }
+
+type OrderUpdate struct {
+	ClientOrderID   string
+	ExchangeOrderID string
+	UpdatedAt       time.Time
+	Status          OrderStatus
+
+	FilledSize  decimal.Decimal
+	AveragePrice decimal.Decimal
+}

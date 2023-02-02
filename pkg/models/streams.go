@@ -11,13 +11,14 @@ type MsgType uint8
 const (
 	MsgTypeTopBid = iota
 	MsgTypeTopAsk
+	MsgTypeOrderStatus
 )
 
 type ExchangeMessage struct {
 	Exchange  string
 	Symbol    string
 	Timestamp time.Time
-	MsgType MsgType
+	MsgType   MsgType
 	Payload   any
 }
 

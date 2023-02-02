@@ -37,12 +37,12 @@ func main() {
 		os.Getenv("BINANCE_KEY"),
 		os.Getenv("BINANCE_SECRET"),
 		"https://testnet.binancefuture.com",
-		"wss://stream.binancefuture.com/stream",
+		"wss://stream.binancefuture.com",
 	)
 
 	go bnc.Listen(ctx, ch)
 
-	if err := bnc.SubscribeBookTickers(ctx, []string{"btcusdt"}); err != nil {
+	if err := bnc.SubscribeBookTickers(ctx, []string{"dogeusdt"}); err != nil {
 		log.Printf("failed to subscribe: %v\n", err)
 		return
 	}

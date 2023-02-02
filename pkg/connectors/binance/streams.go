@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,25 +47,36 @@ func SendWSMsg(
 }
 
 type Binance struct {
-	ws      *connectors.WS
-	api     *API
-	symbols []string
-	mux     sync.RWMutex
+	ws        *connectors.WS
+	API       *API
+	symbols   []string
+	listenKey string
+
+	mux sync.RWMutex
 }
 
 func NewBinance(
 	ctx context.Context,
 	key, secret, apiBaseURL, wsBaseURL string,
 ) *Binance {
+	api := NewAPI(key, secret, apiBaseURL)
 	// TODO: proper reconnection handling
 	ws := &connectors.WS{}
-	if err := ws.Connect(ctx, wsBaseURL); err != nil {
+
+	// Todo refresh listen key
+	lk, err := api.GetListenKey(ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	if err := ws.Connect(ctx, fmt.Sprintf("%s/ws/%s", wsBaseURL, lk)); err != nil {
 		panic(err)
 	}
 
 	return &Binance{
-		ws:  ws,
-		api: NewAPI(key, secret, apiBaseURL),
+		ws:        ws,
+		API:       api,
+		listenKey: lk,
 	}
 }
 
@@ -82,17 +94,28 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 	return err
 }
 
-type streamMessage struct {
-	Stream string          `json:"stream"`
-	Data   json.RawMessage `json:"data"`
-}
-
 type bookTicker struct {
+	Event    string          `json:"e"`
 	Symbol   string          `json:"s"`
 	BidPrice decimal.Decimal `json:"b"`
 	BidSize  decimal.Decimal `json:"B"`
 	AskPrice decimal.Decimal `json:"a"`
 	AskSize  decimal.Decimal `json:"A"`
+}
+
+type orderUpdate struct {
+	Event string `json:"e"`
+	Order struct {
+		Symbol          string `json:"s"`
+		ClientOrderID   string `json:"c"`
+		ExchangeOrderID int64  `json:"i"`
+		Side            string `json:"S"`
+		Type            string `json:"o"`
+		Status          string `json:"X"`
+		FilledSize      string `json:"z"`
+		AveragePrice    string `json:"ap"`
+		UpdatedAtMS     int64  `json:"T"`
+	} `json:"o"`
 }
 
 func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
@@ -116,22 +139,50 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 		select {
 		case msg := <-rawCh:
 			log.Printf("got msg: %s\n", string(msg))
-			var envelope streamMessage
-			if err := json.Unmarshal(msg, &envelope); err != nil {
+
+			// Try to unmarshal to most common event type
+			var e bookTicker
+			if err := json.Unmarshal(msg, &e); err != nil {
 				break
 			}
 
-			parts := strings.Split(envelope.Stream, "@")
-			if len(parts) < 2 {
-				break
-			}
-			// symbol := strings.ToLower(parts[0])
-			streamType := parts[1]
+			switch e.Event {
+			case "ORDER_TRADE_UPDATE":
+				var upd orderUpdate
+				if err := json.Unmarshal(msg, &upd); err != nil {
+					log.Printf("failed to unmarshal ORDER_TRADE_UPDATE: %v %q", err, string(msg))
+					break
+				}
 
-			switch streamType {
+				o := upd.Order
+				size, err := decimal.NewFromString(o.FilledSize)
+				if err != nil {
+					log.Printf("failed to parse filled size: %v %q", err, string(msg))
+					break
+				}
+				price, err := decimal.NewFromString(o.AveragePrice)
+				if err != nil {
+					log.Printf("failed to parse average price: %v %q", err, string(msg))
+					break
+				}
+
+				ch <- models.ExchangeMessage{
+					Exchange:  Name,
+					Symbol:    strings.ToLower(o.Symbol),
+					Timestamp: time.Now().UTC(),
+					MsgType:   models.MsgTypeOrderStatus,
+					Payload: models.OrderUpdate{
+						ClientOrderID:   o.ClientOrderID,
+						ExchangeOrderID: strconv.FormatInt(o.ExchangeOrderID, 10),
+						UpdatedAt:       time.Unix(0, o.UpdatedAtMS*1000*1000).UTC(),
+						Status:          orderStatusFromExchange(o.Status),
+						FilledSize:      size,
+						AveragePrice:    price,
+					},
+				}
 			case "bookTicker":
-				var ticker bookTicker
-				if err := json.Unmarshal(envelope.Data, &ticker); err == nil && ticker.Symbol != "" {
+				ticker := e
+				if ticker.Symbol != "" {
 					ts := time.Now().UTC()
 					ch <- models.ExchangeMessage{
 						Exchange:  Name,
@@ -156,7 +207,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					}
 				}
 			default:
-				log.Printf("unknown stream type: %q", streamType)
+				log.Printf("unknown event type: %q", e.Event)
 			}
 		case <-ctx.Done():
 			return
