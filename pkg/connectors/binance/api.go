@@ -34,7 +34,7 @@ func (api *API) signRequest(queryString, body string, ts time.Time) string {
 }
 
 type listenKeyResp struct {
-	ListenKey string "json:`listenKey`"
+	ListenKey string `json:"listenKey"`
 }
 
 func (api *API) GetListenKey(ctx context.Context) (string, error) {
