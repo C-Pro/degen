@@ -94,13 +94,18 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 	return err
 }
 
+type dummyEvent struct {
+	Event string `json:"e"`
+}
+
 type bookTicker struct {
-	Event    string          `json:"e"`
-	Symbol   string          `json:"s"`
-	BidPrice decimal.Decimal `json:"b"`
-	BidSize  decimal.Decimal `json:"B"`
-	AskPrice decimal.Decimal `json:"a"`
-	AskSize  decimal.Decimal `json:"A"`
+	Event     string          `json:"e"`
+	Symbol    string          `json:"s"`
+	BidPrice  decimal.Decimal `json:"b"`
+	BidSize   decimal.Decimal `json:"B"`
+	AskPrice  decimal.Decimal `json:"a"`
+	AskSize   decimal.Decimal `json:"A"`
+	Timestamp int64           `json:"T"`
 }
 
 type orderUpdate struct {
@@ -138,11 +143,10 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 	for {
 		select {
 		case msg := <-rawCh:
-			log.Printf("got msg: %s\n", string(msg))
-
-			// Try to unmarshal to most common event type
-			var e bookTicker
+			// log.Printf("got msg: %s\n", string(msg))
+			var e dummyEvent
 			if err := json.Unmarshal(msg, &e); err != nil {
+				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
 				break
 			}
 
@@ -181,7 +185,12 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					},
 				}
 			case "bookTicker":
-				ticker := e
+				var ticker bookTicker
+				if err := json.Unmarshal(msg, &ticker); err != nil {
+					log.Printf("failed to unmarshal bookTicker: %v %q", err, string(msg))
+					break
+				}
+
 				if ticker.Symbol != "" {
 					ts := time.Now().UTC()
 					ch <- models.ExchangeMessage{
