@@ -24,7 +24,7 @@ func NewAPI(key, secret, baseURL string) *API {
 		secret:  secret,
 		baseURL: baseURL,
 		client: http.Client{
-			Timeout: time.Second,
+			Timeout: time.Second * 5,
 		},
 	}
 }

@@ -34,6 +34,10 @@ func main() {
 		"wss://stream.binancefuture.com",
 	)
 
+	if bnc == nil {
+		return
+	}
+
 	go bnc.Listen(ctx, ch)
 
 	if err := bnc.SubscribeBookTickers(ctx, []string{"ethusdt"}); err != nil {

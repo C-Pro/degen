@@ -17,8 +17,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const Name = "binance"
-
 var requestID uint64
 
 type BinanceReq struct {
@@ -27,6 +25,86 @@ type BinanceReq struct {
 	Params any    `json:"params,omitempty"`
 }
 
+func (bts *Binance) refreshListenKey(ctx context.Context) error {
+	lk, err := bts.API.GetListenKey(ctx)
+	if err != nil {
+		return fmt.Errorf("binance.refreshListenKey: %v", err)
+	}
+
+	bts.mux.Lock()
+	bts.listenKey = lk
+	bts.mux.Unlock()
+
+	return nil
+}
+
+// refreshListenKeyLoop refreshes listen key every 15 minutes
+func (bts *Binance) refreshListenKeyLoop(ctx context.Context, once sync.Once, ready chan any) {
+	ticker := time.NewTicker(time.Minute * 15)
+	defer ticker.Stop()
+	for {
+		if err := bts.refreshListenKey(ctx); err != nil {
+			log.Println(err)
+			select {
+			case <-time.After(time.Second):
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		once.Do(func() { close(ready) })
+
+		select {
+		case <-ticker.C:
+			continue
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (bts *Binance) getListenKey() string {
+	bts.mux.RLock()
+	defer bts.mux.RUnlock()
+
+	return bts.listenKey
+}
+
+// wsReconnectLoop connects to websocket and reconnects on error or
+// when something is received via reconnectCh channel
+func (bts *Binance) wsReconnectLoop(
+	ctx context.Context,
+	wsBaseURL string,
+	once sync.Once,
+	ready chan any,
+) {
+	for {
+		if err := bts.ws.Connect(
+			ctx,
+			fmt.Sprintf("%s/ws/%s", wsBaseURL, bts.getListenKey()),
+		); err != nil {
+			log.Printf("binance websocket connect error: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+				continue
+			}
+		}
+
+		once.Do(func() { close(ready) })
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-bts.reconnectCh:
+			continue
+		}
+	}
+}
+
+// SendWSMsg sends a websocket command with unique ID
 func SendWSMsg(
 	ctx context.Context,
 	ws *connectors.WS,
@@ -42,42 +120,7 @@ func SendWSMsg(
 		return fmt.Errorf("binance.SendWSMsg: %w", err)
 	}
 
-	log.Printf("subscribing: %s\n", b)
 	return ws.Write(ctx, b)
-}
-
-type Binance struct {
-	ws        *connectors.WS
-	API       *API
-	symbols   []string
-	listenKey string
-
-	mux sync.RWMutex
-}
-
-func NewBinance(
-	ctx context.Context,
-	key, secret, apiBaseURL, wsBaseURL string,
-) *Binance {
-	api := NewAPI(key, secret, apiBaseURL)
-	// TODO: proper reconnection handling
-	ws := &connectors.WS{}
-
-	// Todo refresh listen key
-	lk, err := api.GetListenKey(ctx)
-	if err != nil {
-		panic(err)
-	}
-
-	if err := ws.Connect(ctx, fmt.Sprintf("%s/ws/%s", wsBaseURL, lk)); err != nil {
-		panic(err)
-	}
-
-	return &Binance{
-		ws:        ws,
-		API:       api,
-		listenKey: lk,
-	}
 }
 
 func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) error {
@@ -91,6 +134,7 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 		bts.symbols = symbols
 		bts.mux.Unlock()
 	}
+
 	return err
 }
 
@@ -130,12 +174,14 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 			if err := bts.ws.Listen(ctx, rawCh); err != nil {
 				log.Printf("binance.Listen returned: %v\n", err)
 			}
+
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second):
 				// wait for some time before reconnecting
 				log.Println("binance.Listen reconnecting")
+				bts.reconnectCh <- "reconnect, please"
 			}
 		}
 	}()
