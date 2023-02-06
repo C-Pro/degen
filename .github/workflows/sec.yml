@@ -22,4 +22,4 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha }}
     - name: Scan the code
-      run: osv-scanner -r .
+      run: /root/osv-scanner -r .
