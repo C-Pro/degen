@@ -14,7 +14,8 @@ on:
 
 jobs:
   osv-scanner:
-    runs-on: ghcr.io/google/osv-scanner
+    runs-on: ubuntu-latest
+    container: ghcr.io/google/osv-scanner
     steps:
     - name: Check out code
       uses: actions/checkout@v2
