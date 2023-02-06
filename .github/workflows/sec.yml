@@ -18,10 +18,10 @@ jobs:
     container: ghcr.io/google/osv-scanner
     steps:
     - name: ls
-      run: ls -la / && ls -la /root
+      run: pwd && echo "" && ls -la .
     - name: Check out code
       uses: actions/checkout@v3
       with:
         ref: ${{ github.event.pull_request.head.sha }}
     - name: Scan the code
-      run: /root/osv-scanner -r .
+      run: /osv-scanner -r .
