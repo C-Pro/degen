@@ -54,7 +54,7 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			if m.prevAsk.Price.GreaterThan(tick.Price) {
 				m.cntUp++
 				log.Printf("^^^ %d\n", m.cntUp)
-				if m.cntUp > 1 {
+				if m.cntUp > patience {
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
 						m.ch <- models.OrderSideBuy
 					}
@@ -73,7 +73,7 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			if m.prevBid.Price.LessThan(tick.Price) {
 				m.cntDown++
 				log.Printf("vvv %d\n", m.cntDown)
-				if m.cntDown > 1 {
+				if m.cntDown > patience {
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
 						m.ch <- models.OrderSideSell
 					}
