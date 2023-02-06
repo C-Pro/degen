@@ -3,7 +3,7 @@ name: 'Scan for security vulnerabilities'
 
 on:
   push:
-    branches: [main]
+    branches: [main,utama,master]
   pull_request:
     paths:
     - '**/go.mod'
