@@ -14,6 +14,7 @@ on:
 
 jobs:
   gitleaks:
+    name: GitLeaks credentials scan
     runs-on: ubuntu-latest
     steps:
     - name: Check out code
@@ -25,6 +26,17 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         #GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+  semgrep:
+    name: Semgrep scan
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@v3
+      - run: semgrep
+        env:
+           SEMGREP_RULES: p/default # more at semgrep.dev/explore
   osv-scanner:
     runs-on: ubuntu-latest
     container: ghcr.io/google/osv-scanner
