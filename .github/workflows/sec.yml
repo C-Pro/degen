@@ -1,0 +1,24 @@
+
+name: 'Scan for security vulnerabilities'
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+    - '**/go.mod'
+    - '**/requirements.txt'
+    - '**/setup.py'
+    - '**/*.lock'
+    - '**/*lock.json'
+
+jobs:
+  osv-scanner:
+    runs-on: ghcr.io/google/osv-scanner
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+    - name: Scan the code
+      run: osv-scanner -r .
