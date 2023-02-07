@@ -5,12 +5,7 @@ on:
   push:
     branches: [main,utama,master]
   pull_request:
-    paths:
-    - '**/go.mod'
-    - '**/requirements.txt'
-    - '**/setup.py'
-    - '**/*.lock'
-    - '**/*lock.json'
+    branches: [main,utama,master]
 
 jobs:
   gitleaks:
@@ -20,6 +15,7 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v3
       with:
+        fetch-depth: 10
         ref: ${{ github.event.pull_request.head.sha }}
     - name: GitLeaks
       uses: gitleaks/gitleaks-action@v2
