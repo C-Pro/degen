@@ -5,12 +5,7 @@ on:
   push:
     branches: [main,utama,master]
   pull_request:
-    paths:
-    - '**/go.mod'
-    - '**/requirements.txt'
-    - '**/setup.py'
-    - '**/*.lock'
-    - '**/*lock.json'
+    branches: [main,utama,master]
 
 jobs:
   gitleaks:
