@@ -15,6 +15,7 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v3
       with:
+        fetch-depth: 10
         ref: ${{ github.event.pull_request.head.sha }}
     - name: GitLeaks
       uses: gitleaks/gitleaks-action@v2
