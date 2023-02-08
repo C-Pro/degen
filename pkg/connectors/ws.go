@@ -43,6 +43,7 @@ func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
 		}
 
 		if typ == websocket.PingMessage {
+			//nolint:errcheck
 			ws.conn.WriteMessage(websocket.PongMessage, msg)
 			continue
 		}

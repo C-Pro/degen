@@ -33,7 +33,7 @@ type placeOrderReq struct {
 func newPlaceOrderReq(order models.Order) (*placeOrderReq, error) {
 	req := &placeOrderReq{
 		ClientOrderID: order.ClientOrderID,
-		Symbol:        strings.ToUpper(order.Symbol),
+		Symbol:        symbolToExchange(order.Symbol),
 		Side:          strings.ToUpper(string(order.Side)),
 		Type:          typeToEx(order.Type),
 		TimeInForce:   string(order.TimeInForce),
@@ -71,6 +71,7 @@ func (r *placeOrderReq) Values() url.Values {
 	return values
 }
 
+//easyjson:json
 type placeOrderResp struct {
 	ClientOrderID   string `json:"newClientOrderId"`
 	Symbol          string `json:"symbol"`
@@ -149,7 +150,7 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 
 func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Order, error) {
 	query := fmt.Sprintf("symbol=%s&orderId=%s",
-		strings.ToUpper(order.Symbol),
+		symbolToExchange(order.Symbol),
 		order.ExchangeOrderID,
 	)
 	path := "/fapi/v1/order"

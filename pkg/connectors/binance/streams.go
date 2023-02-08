@@ -39,7 +39,7 @@ func (bts *Binance) refreshListenKey(ctx context.Context) error {
 }
 
 // refreshListenKeyLoop refreshes listen key every 15 minutes
-func (bts *Binance) refreshListenKeyLoop(ctx context.Context, once sync.Once, ready chan any) {
+func (bts *Binance) refreshListenKeyLoop(ctx context.Context, once *sync.Once, ready chan any) {
 	ticker := time.NewTicker(time.Minute * 15)
 	defer ticker.Stop()
 	for {
@@ -76,7 +76,7 @@ func (bts *Binance) getListenKey() string {
 func (bts *Binance) wsReconnectLoop(
 	ctx context.Context,
 	wsBaseURL string,
-	once sync.Once,
+	once *sync.Once,
 	ready chan any,
 ) {
 	for {
@@ -138,10 +138,12 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 	return err
 }
 
+//easyjson:json
 type dummyEvent struct {
 	Event string `json:"e"`
 }
 
+//easyjson:json
 type bookTicker struct {
 	Event     string          `json:"e"`
 	Symbol    string          `json:"s"`
@@ -152,6 +154,7 @@ type bookTicker struct {
 	Timestamp int64           `json:"T"`
 }
 
+//easyjson:json
 type orderUpdate struct {
 	Event string `json:"e"`
 	Order struct {
@@ -218,7 +221,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 
 				ch <- models.ExchangeMessage{
 					Exchange:  Name,
-					Symbol:    strings.ToLower(o.Symbol),
+					Symbol:    symbolFromExchange(o.Symbol),
 					Timestamp: time.Now().UTC(),
 					MsgType:   models.MsgTypeOrderStatus,
 					Payload: models.OrderUpdate{
@@ -241,7 +244,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					ts := time.Now().UTC()
 					ch <- models.ExchangeMessage{
 						Exchange:  Name,
-						Symbol:    strings.ToLower(ticker.Symbol),
+						Symbol:    symbolFromExchange(ticker.Symbol),
 						Timestamp: ts,
 						MsgType:   models.MsgTypeTopAsk,
 						Payload: models.PriceLevel{

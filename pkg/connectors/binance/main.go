@@ -31,7 +31,7 @@ func NewBinance(
 
 	lkOnce := sync.Once{}
 	lkReady := make(chan any)
-	go b.refreshListenKeyLoop(ctx, lkOnce, lkReady)
+	go b.refreshListenKeyLoop(ctx, &lkOnce, lkReady)
 	select {
 	case <-lkReady:
 	case <-ctx.Done():
@@ -40,7 +40,7 @@ func NewBinance(
 
 	wsOnce := sync.Once{}
 	wsReady := make(chan any)
-	go b.wsReconnectLoop(ctx, wsBaseURL, wsOnce, wsReady)
+	go b.wsReconnectLoop(ctx, wsBaseURL, &wsOnce, wsReady)
 	select {
 	case <-wsReady:
 	case <-ctx.Done():
