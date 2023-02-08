@@ -1,5 +1,5 @@
 
-name: 'Scan for security vulnerabilities'
+name: 'Static analysis'
 
 on:
   push:
@@ -43,3 +43,16 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha }}
     - name: Scan the code
       run: /osv-scanner -r --skip-git . || if [ $? -eq 128 ]; then true; else exit $?; fi
+  golangci-lint:
+    name: Run golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+    - uses: actions/setup-go@v3
+      with:
+        go-version: "1.20"
+    - uses: golangci/golangci-lint-action@v3
+      with:
+          version: v1.51
