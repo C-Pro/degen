@@ -42,4 +42,4 @@ jobs:
       with:
         ref: ${{ github.event.pull_request.head.sha }}
     - name: Scan the code
-      run: /osv-scanner -r .
+      run: /osv-scanner -r --skip-git . || if [ $? -eq 128 ]; then true; else exit $?; fi
