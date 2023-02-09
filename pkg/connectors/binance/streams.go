@@ -93,6 +93,25 @@ func (bts *Binance) wsReconnectLoop(
 			}
 		}
 
+		var toSubscribe []string
+		bts.mux.RLock()
+		if len(bts.subscribedStreams) > 0 {
+			toSubscribe = bts.subscribedStreams
+		}
+		bts.mux.RUnlock()
+
+		if len(toSubscribe) > 0 {
+			if err := bts.subscribeStreams(ctx, toSubscribe); err != nil {
+				log.Printf("binance websocket subscribe error: %v", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
+			}
+		}
+
 		once.Do(func() { close(ready) })
 
 		select {
@@ -110,17 +129,18 @@ func SendWSMsg(
 	ws *connectors.WS,
 	method string,
 	params interface{},
-) error {
+) (uint64, error) {
+	id := atomic.AddUint64(&requestID, 1)
 	b, err := json.Marshal(BinanceReq{
 		Method: method,
-		ID:     atomic.AddUint64(&requestID, 1),
+		ID:     id,
 		Params: params,
 	})
 	if err != nil {
-		return fmt.Errorf("binance.SendWSMsg: %w", err)
+		return 0, fmt.Errorf("binance.SendWSMsg: %w", err)
 	}
 
-	return ws.Write(ctx, b)
+	return id, ws.Write(ctx, b)
 }
 
 func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) error {
@@ -128,10 +148,15 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 	for i, s := range symbols {
 		streams[i] = strings.ToLower(s) + "@bookTicker"
 	}
-	err := SendWSMsg(ctx, bts.ws, "SUBSCRIBE", streams)
+
+	return bts.subscribeStreams(ctx, streams)
+}
+
+func (bts *Binance) subscribeStreams(ctx context.Context, streams []string) error {
+	id, err := SendWSMsg(ctx, bts.ws, "SUBSCRIBE", streams)
 	if err == nil {
 		bts.mux.Lock()
-		bts.symbols = symbols
+		bts.subscriptionRequests[id] = streams
 		bts.mux.Unlock()
 	}
 
@@ -141,6 +166,12 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 //easyjson:json
 type dummyEvent struct {
 	Event string `json:"e"`
+}
+
+//easyjson:json
+type subscribeResponse struct {
+	ID     uint64  `json:"id"`
+	Result *string `json:"result"`
 }
 
 //easyjson:json
@@ -192,7 +223,33 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 	for {
 		select {
 		case msg := <-rawCh:
-			// log.Printf("got msg: %s\n", string(msg))
+			var r subscribeResponse
+			if err := json.Unmarshal(msg, &r); err != nil {
+				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
+				break
+			}
+
+			if r.ID > 0 {
+				if r.Result != nil {
+					log.Printf("message id=%d returned result %q", r.ID, *r.Result)
+					break
+				}
+
+				bts.mux.RLock()
+				streams, ok := bts.subscriptionRequests[r.ID]
+				if !ok {
+					log.Printf("unsolicted message id=%d returned result %q", r.ID, *r.Result)
+					bts.mux.RUnlock()
+					break
+				}
+				bts.mux.RUnlock()
+
+				bts.mux.Lock()
+				bts.subscribedStreams = append(bts.subscribedStreams, streams...)
+				bts.mux.Unlock()
+				break
+			}
+
 			var e dummyEvent
 			if err := json.Unmarshal(msg, &e); err != nil {
 				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
@@ -265,7 +322,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					}
 				}
 			default:
-				log.Printf("unknown event type: %q", e.Event)
+				log.Printf("unknown event type: %q\n%q", e.Event, string(msg))
 			}
 		case <-ctx.Done():
 			return
