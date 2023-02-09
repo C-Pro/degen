@@ -10,9 +10,11 @@ import (
 const Name = "binance"
 
 type Binance struct {
-	ws          *connectors.WS
-	API         *API
-	symbols     []string
+	ws                   *connectors.WS
+	API                  *API
+	subscribedStreams    []string
+	subscriptionRequests map[uint64][]string
+
 	listenKey   string
 	reconnectCh chan any
 
@@ -24,9 +26,10 @@ func NewBinance(
 	key, secret, apiBaseURL, wsBaseURL string,
 ) *Binance {
 	b := &Binance{
-		API:         NewAPI(key, secret, apiBaseURL),
-		ws:          &connectors.WS{},
-		reconnectCh: make(chan any),
+		API:                  NewAPI(key, secret, apiBaseURL),
+		ws:                   &connectors.WS{},
+		reconnectCh:          make(chan any),
+		subscriptionRequests: make(map[uint64][]string),
 	}
 
 	lkOnce := sync.Once{}
