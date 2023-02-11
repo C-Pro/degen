@@ -7,6 +7,7 @@ import (
 	easyjson "github.com/mailru/easyjson"
 	jlexer "github.com/mailru/easyjson/jlexer"
 	jwriter "github.com/mailru/easyjson/jwriter"
+	decimal "github.com/shopspring/decimal"
 )
 
 // suppress unused package warning
@@ -474,4 +475,356 @@ func (v *bookTicker) UnmarshalJSON(data []byte) error {
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *bookTicker) UnmarshalEasyJSON(l *jlexer.Lexer) {
 	easyjson72cd9c75DecodeDegenPkgConnectorsBinance3(l, v)
+}
+func easyjson72cd9c75DecodeDegenPkgConnectorsBinance4(in *jlexer.Lexer, out *accountUpdate) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "e":
+			out.Event = string(in.String())
+		case "E":
+			out.Timestamp = int64(in.Int64())
+		case "a":
+			easyjson72cd9c75Decode1(in, &out.Update)
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson72cd9c75EncodeDegenPkgConnectorsBinance4(out *jwriter.Writer, in accountUpdate) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"e\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Event))
+	}
+	{
+		const prefix string = ",\"E\":"
+		out.RawString(prefix)
+		out.Int64(int64(in.Timestamp))
+	}
+	{
+		const prefix string = ",\"a\":"
+		out.RawString(prefix)
+		easyjson72cd9c75Encode1(out, in.Update)
+	}
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v accountUpdate) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjson72cd9c75EncodeDegenPkgConnectorsBinance4(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v accountUpdate) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjson72cd9c75EncodeDegenPkgConnectorsBinance4(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *accountUpdate) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjson72cd9c75DecodeDegenPkgConnectorsBinance4(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *accountUpdate) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjson72cd9c75DecodeDegenPkgConnectorsBinance4(l, v)
+}
+func easyjson72cd9c75Decode1(in *jlexer.Lexer, out *struct {
+	Reason   string `json:"m"`
+	Balances []struct {
+		Asset   string          `json:"a"`
+		Balance decimal.Decimal `json:"wb"`
+	} `json:"B"`
+	Positions []struct {
+		Symbol string          `json:"s"`
+		Amount decimal.Decimal `json:"pa"`
+	} `json:"P"`
+}) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "m":
+			out.Reason = string(in.String())
+		case "B":
+			if in.IsNull() {
+				in.Skip()
+				out.Balances = nil
+			} else {
+				in.Delim('[')
+				if out.Balances == nil {
+					if !in.IsDelim(']') {
+						out.Balances = make([]struct {
+							Asset   string          `json:"a"`
+							Balance decimal.Decimal `json:"wb"`
+						}, 0, 2)
+					} else {
+						out.Balances = []struct {
+							Asset   string          `json:"a"`
+							Balance decimal.Decimal `json:"wb"`
+						}{}
+					}
+				} else {
+					out.Balances = (out.Balances)[:0]
+				}
+				for !in.IsDelim(']') {
+					var v1 struct {
+						Asset   string          `json:"a"`
+						Balance decimal.Decimal `json:"wb"`
+					}
+					easyjson72cd9c75Decode2(in, &v1)
+					out.Balances = append(out.Balances, v1)
+					in.WantComma()
+				}
+				in.Delim(']')
+			}
+		case "P":
+			if in.IsNull() {
+				in.Skip()
+				out.Positions = nil
+			} else {
+				in.Delim('[')
+				if out.Positions == nil {
+					if !in.IsDelim(']') {
+						out.Positions = make([]struct {
+							Symbol string          `json:"s"`
+							Amount decimal.Decimal `json:"pa"`
+						}, 0, 2)
+					} else {
+						out.Positions = []struct {
+							Symbol string          `json:"s"`
+							Amount decimal.Decimal `json:"pa"`
+						}{}
+					}
+				} else {
+					out.Positions = (out.Positions)[:0]
+				}
+				for !in.IsDelim(']') {
+					var v2 struct {
+						Symbol string          `json:"s"`
+						Amount decimal.Decimal `json:"pa"`
+					}
+					easyjson72cd9c75Decode3(in, &v2)
+					out.Positions = append(out.Positions, v2)
+					in.WantComma()
+				}
+				in.Delim(']')
+			}
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson72cd9c75Encode1(out *jwriter.Writer, in struct {
+	Reason   string `json:"m"`
+	Balances []struct {
+		Asset   string          `json:"a"`
+		Balance decimal.Decimal `json:"wb"`
+	} `json:"B"`
+	Positions []struct {
+		Symbol string          `json:"s"`
+		Amount decimal.Decimal `json:"pa"`
+	} `json:"P"`
+}) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"m\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Reason))
+	}
+	{
+		const prefix string = ",\"B\":"
+		out.RawString(prefix)
+		if in.Balances == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+			out.RawString("null")
+		} else {
+			out.RawByte('[')
+			for v3, v4 := range in.Balances {
+				if v3 > 0 {
+					out.RawByte(',')
+				}
+				easyjson72cd9c75Encode2(out, v4)
+			}
+			out.RawByte(']')
+		}
+	}
+	{
+		const prefix string = ",\"P\":"
+		out.RawString(prefix)
+		if in.Positions == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+			out.RawString("null")
+		} else {
+			out.RawByte('[')
+			for v5, v6 := range in.Positions {
+				if v5 > 0 {
+					out.RawByte(',')
+				}
+				easyjson72cd9c75Encode3(out, v6)
+			}
+			out.RawByte(']')
+		}
+	}
+	out.RawByte('}')
+}
+func easyjson72cd9c75Decode3(in *jlexer.Lexer, out *struct {
+	Symbol string          `json:"s"`
+	Amount decimal.Decimal `json:"pa"`
+}) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "s":
+			out.Symbol = string(in.String())
+		case "pa":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.Amount).UnmarshalJSON(data))
+			}
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson72cd9c75Encode3(out *jwriter.Writer, in struct {
+	Symbol string          `json:"s"`
+	Amount decimal.Decimal `json:"pa"`
+}) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"s\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Symbol))
+	}
+	{
+		const prefix string = ",\"pa\":"
+		out.RawString(prefix)
+		out.Raw((in.Amount).MarshalJSON())
+	}
+	out.RawByte('}')
+}
+func easyjson72cd9c75Decode2(in *jlexer.Lexer, out *struct {
+	Asset   string          `json:"a"`
+	Balance decimal.Decimal `json:"wb"`
+}) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "a":
+			out.Asset = string(in.String())
+		case "wb":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.Balance).UnmarshalJSON(data))
+			}
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson72cd9c75Encode2(out *jwriter.Writer, in struct {
+	Asset   string          `json:"a"`
+	Balance decimal.Decimal `json:"wb"`
+}) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"a\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Asset))
+	}
+	{
+		const prefix string = ",\"wb\":"
+		out.RawString(prefix)
+		out.Raw((in.Balance).MarshalJSON())
+	}
+	out.RawByte('}')
 }

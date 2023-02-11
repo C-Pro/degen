@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"degen/pkg/models"
 
@@ -119,10 +117,8 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 		return nil, fmt.Errorf("binance.PlaceOrder failed to read response: %w", err)
 	}
 
-	log.Printf("RESP: \n%s\n", string(b))
-
 	if err := json.Unmarshal(b, &respData); err != nil {
-		return nil, fmt.Errorf("binance.PlaceOrder failed to unmarshal response: %w", err)
+		return nil, fmt.Errorf("binance.PlaceOrder failed to unmarshal response: %w\n%s", err, string(b))
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -131,7 +127,7 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 
 	order.ExchangeOrderID = strconv.FormatInt(respData.ExchangeOrderID, 10)
 	order.Status = orderStatusFromExchange(respData.Status)
-	order.UpdatedAt = time.Unix(0, respData.UpdateTime*1000*1000).UTC()
+	order.UpdatedAt = timestampToTime(respData.UpdateTime)
 
 	if respData.FilledQty != "" {
 		order.FilledSize, err = decimal.NewFromString(respData.FilledQty)
@@ -189,7 +185,7 @@ func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Or
 	}
 
 	order.Status = orderStatusFromExchange(respData.Status)
-	order.UpdatedAt = time.Unix(0, respData.UpdateTime*1000*1000).UTC()
+	order.UpdatedAt = timestampToTime(respData.UpdateTime)
 
 	if respData.FilledQty != "" {
 		order.FilledSize, err = decimal.NewFromString(respData.FilledQty)

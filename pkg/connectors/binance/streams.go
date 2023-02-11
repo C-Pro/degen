@@ -201,6 +201,23 @@ type orderUpdate struct {
 	} `json:"o"`
 }
 
+//easyjson:json
+type accountUpdate struct {
+	Event     string `json:"e"`
+	Timestamp int64  `json:"E"`
+	Update    struct {
+		Reason   string `json:"m"`
+		Balances []struct {
+			Asset   string          `json:"a"`
+			Balance decimal.Decimal `json:"wb"`
+		} `json:"B"`
+		Positions []struct {
+			Symbol string          `json:"s"`
+			Amount decimal.Decimal `json:"pa"`
+		} `json:"P"`
+	} `json:"a"`
+}
+
 func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	rawCh := make(chan []byte, 100)
 	go func() {
@@ -284,11 +301,43 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					Payload: models.OrderUpdate{
 						ClientOrderID:   o.ClientOrderID,
 						ExchangeOrderID: strconv.FormatInt(o.ExchangeOrderID, 10),
-						UpdatedAt:       time.Unix(0, o.UpdatedAtMS*1000*1000).UTC(),
+						UpdatedAt:       timestampToTime(o.UpdatedAtMS),
 						Status:          orderStatusFromExchange(o.Status),
+						Side:            models.OrderSide(strings.ToLower(o.Side)),
+						Symbol:          symbolFromExchange(o.Symbol),
 						FilledSize:      size,
 						AveragePrice:    price,
 					},
+				}
+			case "ACCOUNT_UPDATE":
+				var upd accountUpdate
+				if err := json.Unmarshal(msg, &upd); err != nil {
+					log.Printf("failed to unmarshal account update: %v %q", err, string(msg))
+					break
+				}
+
+				for _, b := range upd.Update.Balances {
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Timestamp: timestampToTime(upd.Timestamp),
+						MsgType:   models.MsgTypeBalanceUpdate,
+						Payload: models.BalanceUpdate{
+							Asset:   b.Asset,
+							Balance: b.Balance,
+						},
+					}
+				}
+
+				for _, p := range upd.Update.Positions {
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Timestamp: timestampToTime(upd.Timestamp),
+						MsgType:   models.MsgTypePositionUpdate,
+						Payload: models.PositionUpdate{
+							Symbol: p.Symbol,
+							Amount: p.Amount,
+						},
+					}
 				}
 			case "bookTicker":
 				var ticker bookTicker
