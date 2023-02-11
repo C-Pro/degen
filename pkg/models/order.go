@@ -67,7 +67,9 @@ type OrderUpdate struct {
 	ExchangeOrderID string
 	UpdatedAt       time.Time
 	Status          OrderStatus
+	Side            OrderSide
+	Symbol          string
 
-	FilledSize  decimal.Decimal
+	FilledSize   decimal.Decimal
 	AveragePrice decimal.Decimal
 }

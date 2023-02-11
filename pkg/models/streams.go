@@ -12,6 +12,8 @@ const (
 	MsgTypeTopBid = iota
 	MsgTypeTopAsk
 	MsgTypeOrderStatus
+	MsgTypeBalanceUpdate
+	MsgTypePositionUpdate
 )
 
 type ExchangeMessage struct {
@@ -25,4 +27,14 @@ type ExchangeMessage struct {
 type PriceLevel struct {
 	Price decimal.Decimal
 	Size  decimal.Decimal
+}
+
+type BalanceUpdate struct {
+	Asset   string
+	Balance decimal.Decimal
+}
+
+type PositionUpdate struct {
+	Symbol string
+	Amount decimal.Decimal
 }

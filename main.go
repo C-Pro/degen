@@ -64,7 +64,22 @@ func main() {
 					continue
 				}
 
-				log.Printf("monkey has placed an order: %#v", res)
+				if res.Type == models.OrderTypeMarket {
+					log.Printf("monkey has placed a %s order to %s %v %s\n",
+						res.Type,
+						res.Side,
+						res.Size,
+						res.Symbol,
+					)
+				} else {
+					log.Printf("monkey has placed a %s order to %s %v %s at %v\n",
+						res.Type,
+						res.Side,
+						res.Size,
+						res.Symbol,
+						res.Price,
+					)
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -80,6 +95,18 @@ func main() {
 			side = "ask"
 		case models.MsgTypeTopBid:
 			side = "bid"
+		case models.MsgTypeOrderStatus:
+			upd := msg.Payload.(models.OrderUpdate)
+			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
+			continue
+		case models.MsgTypeBalanceUpdate:
+			upd := msg.Payload.(models.BalanceUpdate)
+			log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
+			continue
+		case models.MsgTypePositionUpdate:
+			upd := msg.Payload.(models.PositionUpdate)
+			log.Printf("Position %s = %v\n", upd.Symbol, upd.Amount)
+			continue
 		default:
 			continue
 		}

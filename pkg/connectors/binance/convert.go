@@ -2,9 +2,14 @@ package binance
 
 import (
 	"strings"
+	"time"
 
 	"degen/pkg/models"
 )
+
+func timestampToTime(ms int64) time.Time {
+	return time.Unix(0, ms*1000*1000).UTC()
+}
 
 func symbolToExchange(symbol string) string {
 	return strings.ToUpper(symbol)
