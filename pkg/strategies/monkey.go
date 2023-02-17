@@ -7,20 +7,31 @@ import (
 	"time"
 
 	"degen/pkg/models"
+
+	"github.com/shopspring/decimal"
 )
 
-const patience = 1
+const (
+	patience = 1
+	symbol   = "ethusdt"
+	slippage = 0.01
+)
 
 type Monkey struct {
 	ch               chan models.OrderSide
 	cntUp, cntDown   int
 	prevBid, prevAsk *models.PriceLevel
 	numEvents        uint32
+	acc              *models.Account
 }
 
-func NewMonkey(ctx context.Context) *Monkey {
+func NewMonkey(
+	ctx context.Context,
+	acc *models.Account,
+) *Monkey {
 	m := &Monkey{
-		ch: make(chan models.OrderSide),
+		ch:  make(chan models.OrderSide),
+		acc: acc,
 	}
 
 	go func() {
@@ -56,7 +67,13 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 				log.Printf("^^^ %d\n", m.cntUp)
 				if m.cntUp > patience {
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideBuy
+						pos := m.acc.GetPosition(symbol)
+						adjustedTick := tick.Price.Add(tick.Price.Mul(decimal.NewFromFloat(slippage)))
+						if !pos.Amount.IsNegative() ||
+							(pos.Amount.IsNegative() &&
+								pos.EntryPrice.GreaterThan(adjustedTick)) {
+							m.ch <- models.OrderSideBuy
+						}
 					}
 					m.cntUp = 0
 				}
@@ -75,7 +92,13 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 				log.Printf("vvv %d\n", m.cntDown)
 				if m.cntDown > patience {
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideSell
+						pos := m.acc.GetPosition(symbol)
+						adjustedTick := tick.Price.Sub(tick.Price.Mul(decimal.NewFromFloat(slippage)))
+						if !pos.Amount.IsPositive() ||
+							(pos.Amount.IsPositive() &&
+								pos.EntryPrice.LessThan(adjustedTick)) {
+							m.ch <- models.OrderSideSell
+						}
 					}
 					m.cntDown = 0
 				}

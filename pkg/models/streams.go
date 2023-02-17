@@ -35,6 +35,7 @@ type BalanceUpdate struct {
 }
 
 type PositionUpdate struct {
-	Symbol string
-	Amount decimal.Decimal
+	Symbol     string
+	Amount     decimal.Decimal
+	EntryPrice decimal.Decimal
 }

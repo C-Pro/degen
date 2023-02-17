@@ -69,3 +69,17 @@ func (a *Account) UpdatePosition(
 		UpdatedAt:  updatedAt,
 	}
 }
+
+func (a *Account) GetBalance(asset string) Balance {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	return a.balances[asset]
+}
+
+func (a *Account) GetPosition(symbol string) Position {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	return a.positions[symbol]
+}
