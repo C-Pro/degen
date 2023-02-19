@@ -14,7 +14,7 @@ import (
 const (
 	patience = 1
 	symbol   = "ethusdt"
-	slippage = 0.01
+	slippage = 0.005
 )
 
 type Monkey struct {
