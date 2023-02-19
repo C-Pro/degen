@@ -57,23 +57,30 @@ func getPayload(e models.ExchangeMessage) *models.PriceLevel {
 }
 
 func (m *Monkey) See(e models.ExchangeMessage) {
+	pos := m.acc.GetPosition(symbol)
+
 	switch e.MsgType {
 	case models.MsgTypeTopAsk:
-		// sell
 		tick := getPayload(e)
+		// Closing short position if expected PnL > profitMargin.
+		profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+		if pos.Amount.IsNegative() &&
+			pos.EntryPrice.GreaterThan(tick.Price.Add(profitMargin)) {
+			m.ch <- models.OrderSideBuy
+			return
+		}
+		if pos.Amount.IsPositive() {
+			// We are already in position.
+			return
+		}
 		if m.prevAsk != nil {
 			if m.prevAsk.Price.GreaterThan(tick.Price) {
 				m.cntUp++
 				log.Printf("^^^ %d\n", m.cntUp)
 				if m.cntUp > patience {
+					// Opening long position if price is going up.
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						pos := m.acc.GetPosition(symbol)
-						adjustedTick := tick.Price.Add(tick.Price.Mul(decimal.NewFromFloat(slippage)))
-						if !pos.Amount.IsNegative() ||
-							(pos.Amount.IsNegative() &&
-								pos.EntryPrice.GreaterThan(adjustedTick)) {
-							m.ch <- models.OrderSideBuy
-						}
+						m.ch <- models.OrderSideBuy
 					}
 					m.cntUp = 0
 				}
@@ -84,21 +91,26 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 
 		m.prevAsk = tick
 	case models.MsgTypeTopBid:
-		// buy
 		tick := getPayload(e)
+		// Closing long position if expected PnL > profitMargin.
+		profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+		if pos.Amount.IsPositive() &&
+			pos.EntryPrice.LessThan(tick.Price.Sub(profitMargin)) {
+			m.ch <- models.OrderSideSell
+			return
+		}
+		if pos.Amount.IsNegative() {
+			// We are already in position.
+			return
+		}
 		if m.prevBid != nil {
 			if m.prevBid.Price.LessThan(tick.Price) {
 				m.cntDown++
 				log.Printf("vvv %d\n", m.cntDown)
 				if m.cntDown > patience {
+					// Opening short position if price is going up.
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						pos := m.acc.GetPosition(symbol)
-						adjustedTick := tick.Price.Sub(tick.Price.Mul(decimal.NewFromFloat(slippage)))
-						if !pos.Amount.IsPositive() ||
-							(pos.Amount.IsPositive() &&
-								pos.EntryPrice.LessThan(adjustedTick)) {
-							m.ch <- models.OrderSideSell
-						}
+						m.ch <- models.OrderSideSell
 					}
 					m.cntDown = 0
 				}
