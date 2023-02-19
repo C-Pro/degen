@@ -66,7 +66,7 @@ func main() {
 				order := models.Order{
 					CreatedAt: time.Now().UTC(),
 					Symbol:    theSymbol,
-					Size:      decimal.NewFromFloat(0.05),
+					Size:      decimal.NewFromFloat(0.25),
 					Side:      side,
 					Type:      models.OrderTypeMarket,
 				}
