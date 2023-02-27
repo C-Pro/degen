@@ -335,7 +335,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Timestamp: timestampToTime(upd.Timestamp),
 						MsgType:   models.MsgTypePositionUpdate,
 						Payload: models.PositionUpdate{
-							Symbol:     p.Symbol,
+							Symbol:     strings.ToLower(p.Symbol),
 							Amount:     p.Amount,
 							EntryPrice: p.EntryPrice,
 						},
