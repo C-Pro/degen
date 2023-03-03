@@ -80,9 +80,14 @@ func (bts *Binance) wsReconnectLoop(
 	ready chan any,
 ) {
 	for {
+		endpoint := fmt.Sprintf("%s/ws", wsBaseURL)
+		lk := bts.getListenKey()
+		if lk != "" {
+			endpoint = fmt.Sprintf("%s/%s", endpoint, lk)
+		}
 		if err := bts.ws.Connect(
 			ctx,
-			fmt.Sprintf("%s/ws/%s", wsBaseURL, bts.getListenKey()),
+			endpoint,
 		); err != nil {
 			log.Printf("binance websocket connect error: %v", err)
 			select {
