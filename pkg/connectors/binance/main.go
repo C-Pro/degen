@@ -32,13 +32,15 @@ func NewBinance(
 		subscriptionRequests: make(map[uint64][]string),
 	}
 
-	lkOnce := sync.Once{}
-	lkReady := make(chan any)
-	go b.refreshListenKeyLoop(ctx, &lkOnce, lkReady)
-	select {
-	case <-lkReady:
-	case <-ctx.Done():
-		return nil
+	if key != "" {
+		lkOnce := sync.Once{}
+		lkReady := make(chan any)
+		go b.refreshListenKeyLoop(ctx, &lkOnce, lkReady)
+		select {
+		case <-lkReady:
+		case <-ctx.Done():
+			return nil
+		}
 	}
 
 	wsOnce := sync.Once{}
