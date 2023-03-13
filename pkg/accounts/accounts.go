@@ -17,11 +17,13 @@ func NewAccounts() *Accounts {
 	}
 }
 
-func (a *Accounts) AddAccount(id, exchange string) {
+func (a *Accounts) AddAccount(id, exchange string) *models.Account {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	a.data[id] = models.NewAccount(id, exchange)
+	acc := models.NewAccount(id, exchange)
+	a.data[id] = acc
+	return acc
 }
 
 func (a *Accounts) GetAccount(id, exchange string) *models.Account {

@@ -563,8 +563,9 @@ func easyjson72cd9c75Decode1(in *jlexer.Lexer, out *struct {
 		Balance decimal.Decimal `json:"wb"`
 	} `json:"B"`
 	Positions []struct {
-		Symbol string          `json:"s"`
-		Amount decimal.Decimal `json:"pa"`
+		Symbol     string          `json:"s"`
+		Amount     decimal.Decimal `json:"pa"`
+		EntryPrice decimal.Decimal `json:"ep"`
 	} `json:"P"`
 }) {
 	isTopLevel := in.IsStart()
@@ -628,13 +629,15 @@ func easyjson72cd9c75Decode1(in *jlexer.Lexer, out *struct {
 				if out.Positions == nil {
 					if !in.IsDelim(']') {
 						out.Positions = make([]struct {
-							Symbol string          `json:"s"`
-							Amount decimal.Decimal `json:"pa"`
-						}, 0, 2)
+							Symbol     string          `json:"s"`
+							Amount     decimal.Decimal `json:"pa"`
+							EntryPrice decimal.Decimal `json:"ep"`
+						}, 0, 1)
 					} else {
 						out.Positions = []struct {
-							Symbol string          `json:"s"`
-							Amount decimal.Decimal `json:"pa"`
+							Symbol     string          `json:"s"`
+							Amount     decimal.Decimal `json:"pa"`
+							EntryPrice decimal.Decimal `json:"ep"`
 						}{}
 					}
 				} else {
@@ -642,8 +645,9 @@ func easyjson72cd9c75Decode1(in *jlexer.Lexer, out *struct {
 				}
 				for !in.IsDelim(']') {
 					var v2 struct {
-						Symbol string          `json:"s"`
-						Amount decimal.Decimal `json:"pa"`
+						Symbol     string          `json:"s"`
+						Amount     decimal.Decimal `json:"pa"`
+						EntryPrice decimal.Decimal `json:"ep"`
 					}
 					easyjson72cd9c75Decode3(in, &v2)
 					out.Positions = append(out.Positions, v2)
@@ -668,8 +672,9 @@ func easyjson72cd9c75Encode1(out *jwriter.Writer, in struct {
 		Balance decimal.Decimal `json:"wb"`
 	} `json:"B"`
 	Positions []struct {
-		Symbol string          `json:"s"`
-		Amount decimal.Decimal `json:"pa"`
+		Symbol     string          `json:"s"`
+		Amount     decimal.Decimal `json:"pa"`
+		EntryPrice decimal.Decimal `json:"ep"`
 	} `json:"P"`
 }) {
 	out.RawByte('{')
@@ -715,8 +720,9 @@ func easyjson72cd9c75Encode1(out *jwriter.Writer, in struct {
 	out.RawByte('}')
 }
 func easyjson72cd9c75Decode3(in *jlexer.Lexer, out *struct {
-	Symbol string          `json:"s"`
-	Amount decimal.Decimal `json:"pa"`
+	Symbol     string          `json:"s"`
+	Amount     decimal.Decimal `json:"pa"`
+	EntryPrice decimal.Decimal `json:"ep"`
 }) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
@@ -742,6 +748,10 @@ func easyjson72cd9c75Decode3(in *jlexer.Lexer, out *struct {
 			if data := in.Raw(); in.Ok() {
 				in.AddError((out.Amount).UnmarshalJSON(data))
 			}
+		case "ep":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.EntryPrice).UnmarshalJSON(data))
+			}
 		default:
 			in.SkipRecursive()
 		}
@@ -753,8 +763,9 @@ func easyjson72cd9c75Decode3(in *jlexer.Lexer, out *struct {
 	}
 }
 func easyjson72cd9c75Encode3(out *jwriter.Writer, in struct {
-	Symbol string          `json:"s"`
-	Amount decimal.Decimal `json:"pa"`
+	Symbol     string          `json:"s"`
+	Amount     decimal.Decimal `json:"pa"`
+	EntryPrice decimal.Decimal `json:"ep"`
 }) {
 	out.RawByte('{')
 	first := true
@@ -768,6 +779,11 @@ func easyjson72cd9c75Encode3(out *jwriter.Writer, in struct {
 		const prefix string = ",\"pa\":"
 		out.RawString(prefix)
 		out.Raw((in.Amount).MarshalJSON())
+	}
+	{
+		const prefix string = ",\"ep\":"
+		out.RawString(prefix)
+		out.Raw((in.EntryPrice).MarshalJSON())
 	}
 	out.RawByte('}')
 }

@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"degen/pkg/accounts"
 	"degen/pkg/connectors/binance"
 	"degen/pkg/models"
 	"degen/pkg/strategies"
@@ -16,7 +18,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const (
+	theSymbol = "ethusdt"
+	theAsset  = "usdt"
+)
+
 func main() {
+	initialBalance := decimal.Zero
+	once := sync.Once{}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -40,12 +49,15 @@ func main() {
 
 	go bnc.Listen(ctx, ch)
 
-	if err := bnc.SubscribeBookTickers(ctx, []string{"ethusdt"}); err != nil {
+	if err := bnc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
 		log.Printf("failed to subscribe: %v\n", err)
 		return
 	}
 
-	monkey := strategies.NewMonkey(ctx)
+	accs := accounts.NewAccounts()
+	acc := accs.AddAccount("monkey", binance.Name)
+
+	monkey := strategies.NewMonkey(ctx, acc)
 	go func() {
 		for {
 			select {
@@ -53,8 +65,8 @@ func main() {
 				log.Printf("MONKEY WANNA %s!\n", strings.ToUpper(string(side)))
 				order := models.Order{
 					CreatedAt: time.Now().UTC(),
-					Symbol:    "ethusdt",
-					Size:      decimal.NewFromFloat(0.01),
+					Symbol:    theSymbol,
+					Size:      decimal.NewFromFloat(0.25),
 					Side:      side,
 					Type:      models.OrderTypeMarket,
 				}
@@ -86,6 +98,23 @@ func main() {
 		}
 	}()
 
+	go func() {
+		var lastChange time.Time
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+				b := acc.GetBalance(theAsset)
+				if b.UpdatedAt.After(lastChange) {
+					pnl := b.Balance.Sub(initialBalance)
+					log.Printf("### Current balance is %v; PNL is %v", b.Balance, pnl)
+					lastChange = b.UpdatedAt
+				}
+			}
+		}
+	}()
+
 	format := "Best %s price: %v, size: %v\n"
 	side := ""
 	for msg := range ch {
@@ -101,11 +130,16 @@ func main() {
 			continue
 		case models.MsgTypeBalanceUpdate:
 			upd := msg.Payload.(models.BalanceUpdate)
-			log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
+			// log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
+			acc.UpdateBalance(upd.Asset, upd.Balance, msg.Timestamp)
+			once.Do(func() {
+				initialBalance = upd.Balance
+			})
 			continue
 		case models.MsgTypePositionUpdate:
 			upd := msg.Payload.(models.PositionUpdate)
-			log.Printf("Position %s = %v\n", upd.Symbol, upd.Amount)
+			// log.Printf("Position %s = %v\n", upd.Symbol, upd.Amount)
+			acc.UpdatePosition(upd.Symbol, upd.Amount, upd.EntryPrice, msg.Timestamp)
 			continue
 		default:
 			continue

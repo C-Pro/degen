@@ -217,8 +217,9 @@ type accountUpdate struct {
 			Balance decimal.Decimal `json:"wb"`
 		} `json:"B"`
 		Positions []struct {
-			Symbol string          `json:"s"`
-			Amount decimal.Decimal `json:"pa"`
+			Symbol     string          `json:"s"`
+			Amount     decimal.Decimal `json:"pa"`
+			EntryPrice decimal.Decimal `json:"ep"`
 		} `json:"P"`
 	} `json:"a"`
 }
@@ -327,7 +328,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Timestamp: timestampToTime(upd.Timestamp),
 						MsgType:   models.MsgTypeBalanceUpdate,
 						Payload: models.BalanceUpdate{
-							Asset:   b.Asset,
+							Asset:   strings.ToLower(b.Asset),
 							Balance: b.Balance,
 						},
 					}
@@ -339,8 +340,9 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Timestamp: timestampToTime(upd.Timestamp),
 						MsgType:   models.MsgTypePositionUpdate,
 						Payload: models.PositionUpdate{
-							Symbol: p.Symbol,
-							Amount: p.Amount,
+							Symbol:     strings.ToLower(p.Symbol),
+							Amount:     p.Amount,
+							EntryPrice: p.EntryPrice,
 						},
 					}
 				}

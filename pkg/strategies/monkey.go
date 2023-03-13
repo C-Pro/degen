@@ -7,20 +7,31 @@ import (
 	"time"
 
 	"degen/pkg/models"
+
+	"github.com/shopspring/decimal"
 )
 
-const patience = 1
+const (
+	patience = 1
+	symbol   = "ethusdt"
+	slippage = 0.005
+)
 
 type Monkey struct {
 	ch               chan models.OrderSide
 	cntUp, cntDown   int
 	prevBid, prevAsk *models.PriceLevel
 	numEvents        uint32
+	acc              *models.Account
 }
 
-func NewMonkey(ctx context.Context) *Monkey {
+func NewMonkey(
+	ctx context.Context,
+	acc *models.Account,
+) *Monkey {
 	m := &Monkey{
-		ch: make(chan models.OrderSide),
+		ch:  make(chan models.OrderSide),
+		acc: acc,
 	}
 
 	go func() {
@@ -46,15 +57,31 @@ func getPayload(e models.ExchangeMessage) *models.PriceLevel {
 }
 
 func (m *Monkey) See(e models.ExchangeMessage) {
+	pos := m.acc.GetPosition(symbol)
 	switch e.MsgType {
 	case models.MsgTypeTopAsk:
-		// sell
 		tick := getPayload(e)
 		if m.prevAsk != nil {
 			if m.prevAsk.Price.GreaterThan(tick.Price) {
 				m.cntUp++
 				log.Printf("^^^ %d\n", m.cntUp)
+
+				// Closing short position if expected PnL > profitMargin.
+				profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+				if pos.Amount.IsNegative() &&
+					pos.EntryPrice.GreaterThan(tick.Price.Add(profitMargin)) {
+					m.ch <- models.OrderSideBuy
+					m.prevAsk = tick
+					return
+				}
+				if pos.Amount.IsPositive() {
+					// We are already in position.
+					m.prevAsk = tick
+					return
+				}
+
 				if m.cntUp > patience {
+					// Opening long position if price is going up.
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
 						m.ch <- models.OrderSideBuy
 					}
@@ -67,13 +94,28 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 
 		m.prevAsk = tick
 	case models.MsgTypeTopBid:
-		// buy
 		tick := getPayload(e)
+		// Closing long position if expected PnL > profitMargin.
 		if m.prevBid != nil {
 			if m.prevBid.Price.LessThan(tick.Price) {
 				m.cntDown++
 				log.Printf("vvv %d\n", m.cntDown)
+
+				profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+				if pos.Amount.IsPositive() &&
+					pos.EntryPrice.LessThan(tick.Price.Sub(profitMargin)) {
+					m.ch <- models.OrderSideSell
+					m.prevBid = tick
+					return
+				}
+				if pos.Amount.IsNegative() {
+					// We are already in position.
+					m.prevBid = tick
+					return
+				}
+
 				if m.cntDown > patience {
+					// Opening short position if price is going up.
 					if atomic.AddUint32(&m.numEvents, 1) < 4 {
 						m.ch <- models.OrderSideSell
 					}
