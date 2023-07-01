@@ -115,15 +115,12 @@ func main() {
 		}
 	}()
 
-	format := "Best %s price: %v, size: %v\n"
-	side := ""
 	for msg := range ch {
-
 		switch msg.MsgType {
-		case models.MsgTypeTopAsk:
-			side = "ask"
-		case models.MsgTypeTopBid:
-			side = "bid"
+		case models.MsgTypeBBO:
+			bbo := msg.Payload.(models.BBO)
+			log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
+			monkey.See(msg)
 		case models.MsgTypeOrderStatus:
 			upd := msg.Payload.(models.OrderUpdate)
 			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
@@ -144,9 +141,5 @@ func main() {
 		default:
 			continue
 		}
-
-		tick := msg.Payload.(models.PriceLevel)
-		log.Printf(format, side, tick.Price, tick.Size)
-		monkey.See(msg)
 	}
 }

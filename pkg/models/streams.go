@@ -9,11 +9,11 @@ import (
 type MsgType uint8
 
 const (
-	MsgTypeTopBid = iota
-	MsgTypeTopAsk
+	MsgTypeBBO = iota
 	MsgTypeOrderStatus
 	MsgTypeBalanceUpdate
 	MsgTypePositionUpdate
+	MsgTypeTrade
 )
 
 type ExchangeMessage struct {
@@ -29,6 +29,12 @@ type PriceLevel struct {
 	Size  decimal.Decimal
 }
 
+type BBO struct {
+	Bid       PriceLevel
+	Ask       PriceLevel
+	Timestamp time.Time
+}
+
 type BalanceUpdate struct {
 	Asset   string
 	Balance decimal.Decimal
@@ -38,4 +44,11 @@ type PositionUpdate struct {
 	Symbol     string
 	Amount     decimal.Decimal
 	EntryPrice decimal.Decimal
+}
+
+type Trade struct {
+	Side      OrderSide
+	Size      decimal.Decimal
+	Price     decimal.Decimal
+	Timestamp time.Time
 }

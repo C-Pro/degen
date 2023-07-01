@@ -157,6 +157,15 @@ func (bts *Binance) SubscribeBookTickers(ctx context.Context, symbols []string) 
 	return bts.subscribeStreams(ctx, streams)
 }
 
+func (bts *Binance) SubscribeBookAggTrades(ctx context.Context, symbols []string) error {
+	streams := make([]string, len(symbols))
+	for i, s := range symbols {
+		streams[i] = strings.ToLower(s) + "@aggTrade"
+	}
+
+	return bts.subscribeStreams(ctx, streams)
+}
+
 func (bts *Binance) subscribeStreams(ctx context.Context, streams []string) error {
 	id, err := SendWSMsg(ctx, bts.ws, "SUBSCRIBE", streams)
 	if err == nil {
@@ -222,6 +231,20 @@ type accountUpdate struct {
 			EntryPrice decimal.Decimal `json:"ep"`
 		} `json:"P"`
 	} `json:"a"`
+}
+
+//easyjson:json
+type aggTrade struct {
+	Event     string          `json:"e"`
+	Timestamp int64           `json:"E"`
+	Symbol    string          `json:"s"`
+	TradeID   int64           `json:"a"`
+	Price     decimal.Decimal `json:"p"`
+	Quantity  decimal.Decimal `json:"q"`
+	FirstID   int64           `json:"f"`
+	LastID    int64           `json:"l"`
+	TradeTime int64           `json:"T"`
+	IsBuyer   bool            `json:"m"`
 }
 
 func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
@@ -359,21 +382,42 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Exchange:  Name,
 						Symbol:    symbolFromExchange(ticker.Symbol),
 						Timestamp: ts,
-						MsgType:   models.MsgTypeTopAsk,
-						Payload: models.PriceLevel{
-							Price: ticker.AskPrice,
-							Size:  ticker.AskSize,
+						MsgType:   models.MsgTypeBBO,
+						Payload: models.BBO{
+							Bid: models.PriceLevel{
+								Price: ticker.BidPrice,
+								Size:  ticker.BidSize,
+							},
+							Ask: models.PriceLevel{
+								Price: ticker.AskPrice,
+								Size:  ticker.AskSize,
+							},
+							Timestamp: timestampToTime(ticker.Timestamp),
 						},
 					}
+				}
+			case "aggTrade":
+				var trade aggTrade
+				if err := json.Unmarshal(msg, &trade); err != nil {
+					log.Printf("failed to unmarshal aggTrade: %v %q", err, string(msg))
+					break
+				}
 
+				if trade.Symbol != "" {
+					side := models.OrderSideSell
+					if trade.IsBuyer {
+						side = models.OrderSideBuy
+					}
 					ch <- models.ExchangeMessage{
 						Exchange:  Name,
-						Symbol:    strings.ToLower(ticker.Symbol),
-						Timestamp: ts,
-						MsgType:   models.MsgTypeTopBid,
-						Payload: models.PriceLevel{
-							Price: ticker.BidPrice,
-							Size:  ticker.BidSize,
+						Symbol:    symbolFromExchange(trade.Symbol),
+						Timestamp: time.Now().UTC(),
+						MsgType:   models.MsgTypeTrade,
+						Payload: models.Trade{
+							Price:     trade.Price,
+							Size:      trade.Quantity,
+							Timestamp: timestampToTime(trade.Timestamp),
+							Side:      side,
 						},
 					}
 				}

@@ -51,21 +51,39 @@ func main() {
 		log.Printf("failed to subscribe: %v\n", err)
 		return
 	}
+	if err := bnc.SubscribeBookAggTrades(ctx, symbols); err != nil {
+		log.Printf("failed to subscribe: %v\n", err)
+		return
+	}
 
-	writers := make(map[string]mw, len(symbols))
+	bboWriters := make(map[string]mw, len(symbols))
+	tradeWriters := make(map[string]mw, len(symbols))
 	for _, s := range symbols {
 		f, err := os.OpenFile(fmt.Sprintf("binance-%s-bbo.csv", s), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 		if err != nil {
 			log.Fatalf("failed to open file: %v", err)
 		}
 
-		writers[s] = mw{w: csv.NewWriter(f), m: &sync.Mutex{}}
+		bboWriters[s] = mw{w: csv.NewWriter(f), m: &sync.Mutex{}}
 		defer func(f *os.File, w mw) {
 			w.m.Lock()
 			w.w.Flush()
 			w.m.Unlock()
 			f.Close()
-		}(f, writers[s])
+		}(f, bboWriters[s])
+
+		f, err = os.OpenFile(fmt.Sprintf("binance-%s-trades.csv", s), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+		if err != nil {
+			log.Fatalf("failed to open file: %v", err)
+		}
+
+		tradeWriters[s] = mw{w: csv.NewWriter(f), m: &sync.Mutex{}}
+		defer func(f *os.File, w mw) {
+			w.m.Lock()
+			w.w.Flush()
+			w.m.Unlock()
+			f.Close()
+		}(f, tradeWriters[s])
 	}
 
 	go func() {
@@ -78,7 +96,12 @@ func main() {
 			case <-t.C:
 			}
 
-			for _, w := range writers {
+			for _, w := range bboWriters {
+				w.m.Lock()
+				w.w.Flush()
+				w.m.Unlock()
+			}
+			for _, w := range tradeWriters {
 				w.m.Lock()
 				w.w.Flush()
 				w.m.Unlock()
@@ -88,35 +111,34 @@ func main() {
 
 	for msg := range ch {
 		switch msg.MsgType {
-		case models.MsgTypeTopAsk:
-			ask := msg.Payload.(models.PriceLevel)
-			w := writers[msg.Symbol]
+		case models.MsgTypeBBO:
+			bbo := msg.Payload.(models.BBO)
+			w := bboWriters[msg.Symbol]
 			w.m.Lock()
 			err := w.w.Write([]string{
 				strconv.FormatInt(msg.Timestamp.UnixMilli(), 10),
-				ask.Price.String(),
-				ask.Size.String(),
-				"0",
-				"0",
+				bbo.Bid.Price.String(),
+				bbo.Bid.Size.String(),
+				bbo.Ask.Price.String(),
+				bbo.Ask.Size.String(),
 			})
 			w.m.Unlock()
 			if err != nil {
 				log.Printf("failed to write %s ask to csv: %v", msg.Symbol, err)
 			}
-		case models.MsgTypeTopBid:
-			bid := msg.Payload.(models.PriceLevel)
-			w := writers[msg.Symbol]
+		case models.MsgTypeTrade:
+			trade := msg.Payload.(models.Trade)
+			w := tradeWriters[msg.Symbol]
 			w.m.Lock()
 			err := w.w.Write([]string{
 				strconv.FormatInt(msg.Timestamp.UnixMilli(), 10),
-				"0",
-				"0",
-				bid.Price.String(),
-				bid.Size.String(),
+				string(trade.Side),
+				trade.Price.String(),
+				trade.Size.String(),
 			})
 			w.m.Unlock()
 			if err != nil {
-				log.Printf("failed to write %s bid to csv: %v", msg.Symbol, err)
+				log.Printf("failed to write %s trade to csv: %v", msg.Symbol, err)
 			}
 		default:
 			continue
