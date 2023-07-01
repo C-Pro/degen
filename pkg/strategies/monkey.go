@@ -20,7 +20,7 @@ const (
 type Monkey struct {
 	ch               chan models.OrderSide
 	cntUp, cntDown   int
-	prevBid, prevAsk *models.PriceLevel
+	prevBid, prevAsk models.PriceLevel
 	numEvents        uint32
 	acc              *models.Account
 }
@@ -50,33 +50,27 @@ func NewMonkey(
 	return m
 }
 
-func getPayload(e models.ExchangeMessage) *models.PriceLevel {
-	pl := &models.PriceLevel{}
-	*pl = e.Payload.(models.PriceLevel)
-	return pl
-}
-
 func (m *Monkey) See(e models.ExchangeMessage) {
 	pos := m.acc.GetPosition(symbol)
 	switch e.MsgType {
-	case models.MsgTypeTopAsk:
-		tick := getPayload(e)
-		if m.prevAsk != nil {
-			if m.prevAsk.Price.GreaterThan(tick.Price) {
+	case models.MsgTypeBBO:
+		bbo := e.Payload.(models.BBO)
+		if !m.prevAsk.Price.IsZero() {
+			if m.prevAsk.Price.GreaterThan(bbo.Ask.Price) {
 				m.cntUp++
 				log.Printf("^^^ %d\n", m.cntUp)
 
 				// Closing short position if expected PnL > profitMargin.
-				profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+				profitMargin := bbo.Ask.Price.Mul(decimal.NewFromFloat(slippage))
 				if pos.Amount.IsNegative() &&
-					pos.EntryPrice.GreaterThan(tick.Price.Add(profitMargin)) {
+					pos.EntryPrice.GreaterThan(bbo.Ask.Price.Add(profitMargin)) {
 					m.ch <- models.OrderSideBuy
-					m.prevAsk = tick
+					m.prevAsk = bbo.Ask
 					return
 				}
 				if pos.Amount.IsPositive() {
 					// We are already in position.
-					m.prevAsk = tick
+					m.prevAsk = bbo.Ask
 					return
 				}
 
@@ -87,30 +81,29 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 					}
 					m.cntUp = 0
 				}
-			} else if m.prevAsk.Price.LessThan(tick.Price) {
+			} else if m.prevAsk.Price.LessThan(bbo.Ask.Price) {
 				m.cntUp = 0
 			}
 		}
 
-		m.prevAsk = tick
-	case models.MsgTypeTopBid:
-		tick := getPayload(e)
+		m.prevAsk = bbo.Ask
+
 		// Closing long position if expected PnL > profitMargin.
-		if m.prevBid != nil {
-			if m.prevBid.Price.LessThan(tick.Price) {
+		if !m.prevBid.Price.IsZero() {
+			if m.prevBid.Price.LessThan(bbo.Bid.Price) {
 				m.cntDown++
 				log.Printf("vvv %d\n", m.cntDown)
 
-				profitMargin := tick.Price.Mul(decimal.NewFromFloat(slippage))
+				profitMargin := bbo.Bid.Price.Mul(decimal.NewFromFloat(slippage))
 				if pos.Amount.IsPositive() &&
-					pos.EntryPrice.LessThan(tick.Price.Sub(profitMargin)) {
+					pos.EntryPrice.LessThan(bbo.Bid.Price.Sub(profitMargin)) {
 					m.ch <- models.OrderSideSell
-					m.prevBid = tick
+					m.prevBid = bbo.Bid
 					return
 				}
 				if pos.Amount.IsNegative() {
 					// We are already in position.
-					m.prevBid = tick
+					m.prevBid = bbo.Bid
 					return
 				}
 
@@ -121,12 +114,12 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 					}
 					m.cntDown = 0
 				}
-			} else if m.prevBid.Price.GreaterThan(tick.Price) {
+			} else if m.prevBid.Price.GreaterThan(bbo.Bid.Price) {
 				m.cntDown = 0
 			}
 		}
 
-		m.prevBid = tick
+		m.prevBid = bbo.Bid
 	}
 }
 
