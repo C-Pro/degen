@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -147,6 +148,7 @@ func main() {
 	}()
 
 	go func() {
+		i := uint64(0)
 		t := time.NewTicker(time.Second)
 		defer t.Stop()
 		for {
@@ -158,6 +160,13 @@ func main() {
 
 			mux.RLock()
 			row := getFeatures(windows, keys)
+			if i%60 == 0 {
+				log.Printf("%s: BTC: %06.02f",
+					time.Now().Format(time.RFC3339),
+					(windows[key("btcusdt", "1_sec", "bid_price")].Avg()+
+						windows[key("btcusdt", "1_sec", "ask_price")].Avg())/2,
+				)
+			}
 			mux.RUnlock()
 
 			err := w.Write(row)
@@ -165,22 +174,28 @@ func main() {
 				log.Printf("failed to write row to csv: %v", err)
 			}
 			w.Flush()
+			i++
 		}
 	}()
 
 	for msg := range ch {
+		msg.Symbol = strings.ToLower(msg.Symbol)
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
+
 			for n := range windowIntervals {
+				mux.Lock()
 				windows[key(msg.Symbol, n, "ask_price")].Add(bbo.Ask.Price.InexactFloat64())
 				windows[key(msg.Symbol, n, "bid_price")].Add(bbo.Bid.Price.InexactFloat64())
 				windows[key(msg.Symbol, n, "ask_size")].Add(bbo.Ask.Size.InexactFloat64())
 				windows[key(msg.Symbol, n, "bid_size")].Add(bbo.Bid.Size.InexactFloat64())
+				mux.Unlock()
 			}
 		case models.MsgTypeTrade:
 			trade := msg.Payload.(models.Trade)
 			for n := range windowIntervals {
+				mux.Lock()
 				if trade.Side == models.OrderSideBuy {
 					windows[key(msg.Symbol, n, "buy_volume")].Add(trade.Size.InexactFloat64())
 					windows[key(msg.Symbol, n, "buy_price")].Add(trade.Price.InexactFloat64())
@@ -188,6 +203,7 @@ func main() {
 					windows[key(msg.Symbol, n, "sell_volume")].Add(trade.Size.InexactFloat64())
 					windows[key(msg.Symbol, n, "sell_price")].Add(trade.Price.InexactFloat64())
 				}
+				mux.Unlock()
 			}
 		default:
 			continue
