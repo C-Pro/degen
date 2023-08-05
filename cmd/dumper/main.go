@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -53,11 +52,6 @@ var (
 
 func key(symbol, interval, field string) string {
 	return fmt.Sprintf("%s-%s-%s", symbol, interval, field)
-}
-
-func parseKey(key string) (symbol, interval, field string) {
-	parts := strings.Split(key, "-")
-	return parts[0], parts[1], parts[2]
 }
 
 func getHeader(keys []string) []string {
