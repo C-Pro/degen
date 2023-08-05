@@ -7,25 +7,101 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/c-pro/rolling"
 
 	"degen/pkg/connectors/binance"
 	"degen/pkg/models"
 )
 
-var symbols = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt"}
+type (
+	featureFn   func(*rolling.Window) float64
+	featureSpec struct {
+		name string
+		fn   featureFn
+	}
+)
 
-type mw struct {
-	w *csv.Writer
-	m *sync.Mutex
+var (
+	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
+	windowIntervals = map[string]time.Duration{
+		"1_sec":  time.Second,
+		"5_sec":  5 * time.Second,
+		"30_sec": 30 * time.Second,
+		"1_min":  time.Minute,
+		"5_min":  5 * time.Minute,
+		"10_min": 10 * time.Minute,
+	}
+	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
+	features   = []featureSpec{
+		{"min", func(w *rolling.Window) float64 { return w.Min() }},
+		{"max", func(w *rolling.Window) float64 { return w.Max() }},
+		{"first", func(w *rolling.Window) float64 { return w.First() }},
+		{"last", func(w *rolling.Window) float64 { return w.Last() }},
+		{"mid", func(w *rolling.Window) float64 { return w.Mid() }},
+		{"avg", func(w *rolling.Window) float64 { return w.Avg() }},
+		{"sum", func(w *rolling.Window) float64 { return w.Sum() }},
+		{"count", func(w *rolling.Window) float64 { return float64(w.Count()) }},
+	}
+)
+
+func key(symbol, interval, field string) string {
+	return fmt.Sprintf("%s-%s-%s", symbol, interval, field)
+}
+
+func parseKey(key string) (symbol, interval, field string) {
+	parts := strings.Split(key, "-")
+	return parts[0], parts[1], parts[2]
+}
+
+func getHeader(keys []string) []string {
+	row := []string{"timestamp"}
+	for _, k := range keys {
+		for _, spec := range features {
+			row = append(row, fmt.Sprintf("%s-%s", k, spec.name))
+		}
+	}
+
+	return row
+}
+
+func getFeatures(windows map[string]*rolling.Window, keys []string) []string {
+	row := []string{}
+
+	for _, k := range keys {
+		window := windows[k]
+		row = append(row, strconv.FormatInt(time.Now().UnixMilli(), 10))
+		for _, spec := range features {
+			row = append(row, strconv.FormatFloat(spec.fn(window), 'f', -1, 64))
+		}
+	}
+
+	return row
 }
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Initialize rolling windows for the feature vector.
+	keys := []string{}
+	windows := make(map[string]*rolling.Window)
+	for _, s := range symbols {
+		for n, d := range windowIntervals {
+			for _, f := range dataFields {
+				k := key(s, n, f)
+				windows[k] = rolling.NewWindow(86400, d)
+				keys = append(keys, k)
+			}
+		}
+	}
+	sort.Strings(keys)
 
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -56,35 +132,25 @@ func main() {
 		return
 	}
 
-	bboWriters := make(map[string]mw, len(symbols))
-	tradeWriters := make(map[string]mw, len(symbols))
-	for _, s := range symbols {
-		f, err := os.OpenFile(fmt.Sprintf("binance-%s-bbo.csv", s), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
-		if err != nil {
-			log.Fatalf("failed to open file: %v", err)
-		}
-
-		bboWriters[s] = mw{w: csv.NewWriter(f), m: &sync.Mutex{}}
-		defer func(f *os.File, w mw) {
-			w.m.Lock()
-			w.w.Flush()
-			w.m.Unlock()
-			f.Close()
-		}(f, bboWriters[s])
-
-		f, err = os.OpenFile(fmt.Sprintf("binance-%s-trades.csv", s), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
-		if err != nil {
-			log.Fatalf("failed to open file: %v", err)
-		}
-
-		tradeWriters[s] = mw{w: csv.NewWriter(f), m: &sync.Mutex{}}
-		defer func(f *os.File, w mw) {
-			w.m.Lock()
-			w.w.Flush()
-			w.m.Unlock()
-			f.Close()
-		}(f, tradeWriters[s])
+	f, err := os.OpenFile("binance.csv", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		log.Fatalf("failed to open file: %v", err)
 	}
+
+	w := csv.NewWriter(f)
+	mux := &sync.RWMutex{}
+
+	// If file is empty, write header.
+	if stat, err := f.Stat(); err == nil && stat.Size() == 0 {
+		if err := w.Write(getHeader(keys)); err != nil {
+			log.Fatalf("failed to write header to csv: %v", err)
+		}
+	}
+
+	defer func() {
+		w.Flush()
+		f.Close()
+	}()
 
 	go func() {
 		t := time.NewTicker(time.Second)
@@ -96,16 +162,15 @@ func main() {
 			case <-t.C:
 			}
 
-			for _, w := range bboWriters {
-				w.m.Lock()
-				w.w.Flush()
-				w.m.Unlock()
+			mux.RLock()
+			row := getFeatures(windows, keys)
+			mux.RUnlock()
+
+			err := w.Write(row)
+			if err != nil {
+				log.Printf("failed to write row to csv: %v", err)
 			}
-			for _, w := range tradeWriters {
-				w.m.Lock()
-				w.w.Flush()
-				w.m.Unlock()
-			}
+			w.Flush()
 		}
 	}()
 
@@ -113,32 +178,22 @@ func main() {
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
-			w := bboWriters[msg.Symbol]
-			w.m.Lock()
-			err := w.w.Write([]string{
-				strconv.FormatInt(msg.Timestamp.UnixMilli(), 10),
-				bbo.Bid.Price.String(),
-				bbo.Bid.Size.String(),
-				bbo.Ask.Price.String(),
-				bbo.Ask.Size.String(),
-			})
-			w.m.Unlock()
-			if err != nil {
-				log.Printf("failed to write %s ask to csv: %v", msg.Symbol, err)
+			for n := range windowIntervals {
+				windows[key(msg.Symbol, n, "ask_price")].Add(bbo.Ask.Price.InexactFloat64())
+				windows[key(msg.Symbol, n, "bid_price")].Add(bbo.Bid.Price.InexactFloat64())
+				windows[key(msg.Symbol, n, "ask_size")].Add(bbo.Ask.Size.InexactFloat64())
+				windows[key(msg.Symbol, n, "bid_size")].Add(bbo.Bid.Size.InexactFloat64())
 			}
 		case models.MsgTypeTrade:
 			trade := msg.Payload.(models.Trade)
-			w := tradeWriters[msg.Symbol]
-			w.m.Lock()
-			err := w.w.Write([]string{
-				strconv.FormatInt(msg.Timestamp.UnixMilli(), 10),
-				string(trade.Side),
-				trade.Price.String(),
-				trade.Size.String(),
-			})
-			w.m.Unlock()
-			if err != nil {
-				log.Printf("failed to write %s trade to csv: %v", msg.Symbol, err)
+			for n := range windowIntervals {
+				if trade.Side == models.OrderSideBuy {
+					windows[key(msg.Symbol, n, "buy_volume")].Add(trade.Size.InexactFloat64())
+					windows[key(msg.Symbol, n, "buy_price")].Add(trade.Price.InexactFloat64())
+				} else {
+					windows[key(msg.Symbol, n, "sell_volume")].Add(trade.Size.InexactFloat64())
+					windows[key(msg.Symbol, n, "sell_price")].Add(trade.Price.InexactFloat64())
+				}
 			}
 		default:
 			continue

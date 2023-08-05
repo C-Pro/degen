@@ -1,3 +1,7 @@
+github.com/c-pro/rolling v0.0.0-20230719090925-f64bebf524bd h1:qe77vSiYAmFaEGgPCZGpf02DiIuPWeOyXwCjnEKdkS8=
+github.com/c-pro/rolling v0.0.0-20230719090925-f64bebf524bd/go.mod h1:pyHMOgF6chJ2/WbkdpNjHLDvaqKZcbn4ROY7uClM/Ks=
+github.com/gammazero/deque v0.2.1 h1:qSdsbG6pgp6nL7A0+K/B7s12mcCY/5l5SIUpMOl+dC0=
+github.com/gammazero/deque v0.2.1/go.mod h1:LFroj8x4cMYCukHJDbxFCkT+r9AndaJnFMuZDV34tuU=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/gorilla/websocket v1.4.1 h1:q7AeDBpnBk8AogcD4DSag/Ukw/KV+YhzLj2bP5HvKCM=
