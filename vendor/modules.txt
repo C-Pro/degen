@@ -1,3 +1,9 @@
+# github.com/c-pro/rolling v0.0.0-20230719090925-f64bebf524bd
+## explicit; go 1.20
+github.com/c-pro/rolling
+# github.com/gammazero/deque v0.2.1
+## explicit; go 1.18
+github.com/gammazero/deque
 # github.com/google/uuid v1.3.0
 ## explicit
 github.com/google/uuid
