@@ -106,6 +106,7 @@ func (bts *Binance) wsReconnectLoop(
 		bts.mux.RUnlock()
 
 		if len(toSubscribe) > 0 {
+			log.Printf("subscribing: %q", strings.Join(toSubscribe, ","))
 			if err := bts.subscribeStreams(ctx, toSubscribe); err != nil {
 				log.Printf("binance websocket subscribe error: %v", err)
 				select {
@@ -266,8 +267,18 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 		}
 	}()
 
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
+		case <-ticker.C:
+			ts := atomic.LoadInt64(&bts.lastReceived)
+			if time.Since(time.Unix(0, ts)) > bts.idleTimeout {
+				log.Printf("no messages for %s, reconnecting", bts.idleTimeout)
+				bts.reconnectCh <- "reconnect, please"
+				return
+			}
 		case msg := <-rawCh:
 			var r subscribeResponse
 			if err := json.Unmarshal(msg, &r); err != nil {
@@ -301,6 +312,8 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
 				break
 			}
+
+			atomic.StoreInt64(&bts.lastReceived, time.Now().UnixNano())
 
 			switch e.Event {
 			case "ORDER_TRADE_UPDATE":

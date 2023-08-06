@@ -32,11 +32,11 @@ var (
 	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
 	windowIntervals = map[string]time.Duration{
 		"1_sec":  time.Second,
-		"5_sec":  5 * time.Second,
+/*		"5_sec":  5 * time.Second,
 		"30_sec": 30 * time.Second,
 		"1_min":  time.Minute,
 		"5_min":  5 * time.Minute,
-		"10_min": 10 * time.Minute,
+		"10_min": 10 * time.Minute,*/
 	}
 	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
 	features   = []featureSpec{

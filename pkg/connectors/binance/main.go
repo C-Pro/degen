@@ -3,6 +3,7 @@ package binance
 import (
 	"context"
 	"sync"
+	"time"
 
 	"degen/pkg/connectors"
 )
@@ -14,6 +15,8 @@ type Binance struct {
 	API                  *API
 	subscribedStreams    []string
 	subscriptionRequests map[uint64][]string
+	lastReceived         int64
+	idleTimeout          time.Duration
 
 	listenKey   string
 	reconnectCh chan any
@@ -30,6 +33,7 @@ func NewBinance(
 		ws:                   &connectors.WS{},
 		reconnectCh:          make(chan any),
 		subscriptionRequests: make(map[uint64][]string),
+		idleTimeout:          5 * time.Second,
 	}
 
 	if key != "" {
