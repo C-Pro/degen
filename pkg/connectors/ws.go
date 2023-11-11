@@ -12,8 +12,10 @@ import (
 )
 
 type WS struct {
-	conn *websocket.Conn
-	mux  sync.Mutex
+	conn       *websocket.Conn
+	connCtx    context.Context
+	connCancel context.CancelFunc
+	mux        sync.Mutex
 }
 
 func (ws *WS) Connect(ctx context.Context, url string) error {
@@ -32,13 +34,15 @@ func (ws *WS) Connect(ctx context.Context, url string) error {
 	}
 
 	ws.conn = conn
+	ws.connCtx, ws.connCancel = context.WithCancel(ctx)
 	return nil
 }
 
-func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
+func (ws *WS) Listen(ch chan<- []byte) error {
 	for {
 		typ, msg, err := ws.conn.ReadMessage()
 		if err != nil {
+			ws.connCancel()
 			return fmt.Errorf("websocket.Read error: %v", err)
 		}
 
@@ -51,7 +55,7 @@ func (ws *WS) Listen(ctx context.Context, ch chan<- []byte) error {
 		ch <- msg
 
 		select {
-		case <-ctx.Done():
+		case <-ws.connCtx.Done():
 			return nil
 		default:
 			time.Sleep(time.Millisecond)
@@ -63,4 +67,10 @@ func (ws *WS) Write(ctx context.Context, msg []byte) error {
 	ws.mux.Lock()
 	defer ws.mux.Unlock()
 	return ws.conn.WriteMessage(websocket.TextMessage, msg)
+}
+
+func (ws *WS) Close() {
+	ws.mux.Lock()
+	defer ws.mux.Unlock()
+	ws.connCancel()
 }

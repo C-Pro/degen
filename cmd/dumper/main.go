@@ -32,11 +32,9 @@ var (
 	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
 	windowIntervals = map[string]time.Duration{
 		"1_sec":  time.Second,
-/*		"5_sec":  5 * time.Second,
+		"5_sec":  5 * time.Second,
 		"30_sec": 30 * time.Second,
 		"1_min":  time.Minute,
-		"5_min":  5 * time.Minute,
-		"10_min": 10 * time.Minute,*/
 	}
 	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
 	features   = []featureSpec{
@@ -67,11 +65,12 @@ func getHeader(keys []string) []string {
 }
 
 func getFeatures(windows map[string]*rolling.Window, keys []string) []string {
-	row := []string{}
-
+	row := []string{
+		strconv.FormatInt(time.Now().UnixMilli(), 10),
+	}
 	for _, k := range keys {
 		window := windows[k]
-		row = append(row, strconv.FormatInt(time.Now().UnixMilli(), 10))
+
 		for _, spec := range features {
 			row = append(row, strconv.FormatFloat(spec.fn(window), 'f', -1, 64))
 		}
@@ -91,7 +90,7 @@ func main() {
 		for n, d := range windowIntervals {
 			for _, f := range dataFields {
 				k := key(s, n, f)
-				windows[k] = rolling.NewWindow(86400, d)
+				windows[k] = rolling.NewWindow(10000, d)
 				keys = append(keys, k)
 			}
 		}
@@ -160,13 +159,11 @@ func main() {
 
 			mux.RLock()
 			row := getFeatures(windows, keys)
-			if i%60 == 0 {
-				log.Printf("%s: BTC: %06.02f",
-					time.Now().Format(time.RFC3339),
-					(windows[key("btcusdt", "1_sec", "bid_price")].Avg()+
-						windows[key("btcusdt", "1_sec", "ask_price")].Avg())/2,
-				)
-			}
+			log.Printf("%s: BTC: %06.02f",
+				time.Now().Format(time.RFC3339),
+				(windows[key("btcusdt", "1_sec", "bid_price")].Avg()+
+					windows[key("btcusdt", "1_sec", "ask_price")].Avg())/2,
+			)
 			mux.RUnlock()
 
 			err := w.Write(row)
@@ -183,7 +180,6 @@ func main() {
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
-
 			for n := range windowIntervals {
 				mux.Lock()
 				windows[key(msg.Symbol, n, "ask_price")].Add(bbo.Ask.Price.InexactFloat64())

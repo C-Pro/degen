@@ -62,7 +62,7 @@ func TestWS(t *testing.T) {
 
 	ch := make(chan []byte)
 	go func() {
-		if err := ws.Listen(ctx, ch); err != nil {
+		if err := ws.Listen(ch); err != nil {
 			t.Errorf("ws.Listen returned error: %v", err)
 			return
 		}
