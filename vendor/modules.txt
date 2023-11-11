@@ -1,4 +1,4 @@
-# github.com/c-pro/rolling v0.0.0-20230812153031-0277a15d989e
+# github.com/c-pro/rolling v0.0.0-20231111044043-1a5d3e7091f5
 ## explicit; go 1.20
 github.com/c-pro/rolling
 # github.com/gammazero/deque v0.2.1

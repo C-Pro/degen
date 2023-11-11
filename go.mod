@@ -3,7 +3,7 @@ module degen
 go 1.21.4
 
 require (
-	github.com/c-pro/rolling v0.0.0-20230812153031-0277a15d989e
+	github.com/c-pro/rolling v0.0.0-20231111044043-1a5d3e7091f5
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.4.1
 	github.com/mailru/easyjson v0.7.7
