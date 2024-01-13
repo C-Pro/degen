@@ -269,9 +269,14 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			default:
+				msg := "normal close"
+				if err != nil {
+					msg = err.Error()
+				}
+				bts.reconnectCh <- msg
 				// wait for some time before reconnecting
-				bts.reconnectCh <- err.Error()
+				time.Sleep(time.Second)
 			}
 		}
 	}()
@@ -292,6 +297,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 			ts := atomic.LoadInt64(&bts.lastReceived)
 			if time.Since(time.Unix(0, ts)) > bts.idleTimeout {
 				bts.reconnectCh <- fmt.Sprintf("no messages for %s", bts.idleTimeout)
+				time.Sleep(time.Second)
 				goto loop
 			}
 		case msg := <-rawCh:
