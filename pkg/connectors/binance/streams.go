@@ -104,6 +104,7 @@ func (bts *Binance) wsReconnectLoop(
 		bts.mux.RLock()
 		if len(bts.subscribedStreams) > 0 {
 			toSubscribe = bts.subscribedStreams
+			bts.subscribedStreams = bts.subscribedStreams[:0]
 		}
 		bts.mux.RUnlock()
 

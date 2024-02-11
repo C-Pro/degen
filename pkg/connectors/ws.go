@@ -56,7 +56,7 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 
 		select {
 		case <-ws.connCtx.Done():
-			return nil
+			return ws.conn.Close()
 		default:
 			time.Sleep(time.Millisecond)
 		}

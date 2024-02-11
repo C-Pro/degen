@@ -1,4 +1,4 @@
-package features
+package accum
 
 import (
 	"math"
@@ -67,7 +67,7 @@ func TestAgg(t *testing.T) {
 	a2 := New()
 	a2.Observe(2)
 
-	acc := NewFromAccs([]Accumulator{a1, a2})
+	acc := NewFromAccs([]*Accumulator{a1, a2})
 	if !eq(acc.Min(), 1) {
 		t.Errorf("expected min to be 1, got %v", acc.Min())
 	}

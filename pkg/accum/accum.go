@@ -1,4 +1,4 @@
-package features
+package accum
 
 import "math"
 
@@ -18,8 +18,8 @@ type Accumulator struct {
 // New creates new empty accumulator.
 // The only operation that makes sense to call on empty
 // Accumulator is Observe.
-func New() Accumulator {
-	return Accumulator{
+func New() *Accumulator {
+	return &Accumulator{
 		sum:   math.NaN(),
 		min:   math.NaN(),
 		max:   math.NaN(),
@@ -28,10 +28,19 @@ func New() Accumulator {
 	}
 }
 
+// Reset accumulator state to initial.
+func (a *Accumulator) Reset() {
+	a.sum = math.NaN()
+	a.min = math.NaN()
+	a.max = math.NaN()
+	a.first = math.NaN()
+	a.last = math.NaN()
+}
+
 // NewFromAccs creates accumulator from a slice of other accumulators.
 // For example we can get approximate 1m accumulated value stats by merging
 // 60 1s accumulators.
-func NewFromAccs(accs []Accumulator) Accumulator {
+func NewFromAccs(accs []*Accumulator) *Accumulator {
 	a := New()
 	if len(accs) == 0 {
 		return a
