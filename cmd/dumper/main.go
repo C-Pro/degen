@@ -14,14 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/c-pro/rolling"
-
+	"degen/pkg/accum"
 	"degen/pkg/connectors/binance"
 	"degen/pkg/models"
 )
 
 type (
-	featureFn   func(*rolling.Window) float64
+	featureFn   func(*accum.Intervals) float64
 	featureSpec struct {
 		name string
 		fn   featureFn
@@ -30,41 +29,65 @@ type (
 
 var (
 	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
+	metrics         = []string{"min", "max", "first", "last", "avg", "sum", "count"}
 	windowIntervals = map[string]time.Duration{
 		"1_sec":  time.Second,
-		"5_sec":  5 * time.Second,
-		"30_sec": 30 * time.Second,
+		"15_sec": time.Second * 15,
 		"1_min":  time.Minute,
+		"15_min": time.Minute * 15,
+		"1_hour": time.Hour,
 	}
 	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
-	features   = []featureSpec{
-		{"min", func(w *rolling.Window) float64 { return w.Min() }},
-		{"max", func(w *rolling.Window) float64 { return w.Max() }},
-		{"first", func(w *rolling.Window) float64 { return w.First() }},
-		{"last", func(w *rolling.Window) float64 { return w.Last() }},
-		{"mid", func(w *rolling.Window) float64 { return w.Mid() }},
-		{"avg", func(w *rolling.Window) float64 { return w.Avg() }},
-		{"sum", func(w *rolling.Window) float64 { return w.Sum() }},
-		{"count", func(w *rolling.Window) float64 { return float64(w.Count()) }},
-	}
+	allFields  []string
 )
 
-func key(symbol, interval, field string) string {
-	return fmt.Sprintf("%s-%s-%s", symbol, interval, field)
+func initAcc(symbols []string) map[string]*accum.Intervals {
+	cnt := map[string]int{
+		"1_sec":  15,
+		"15_sec": 4,
+		"1_min":  15,
+		"15_min": 4,
+		"1_hour": 1,
+	}
+	accs := make(map[string]*accum.Intervals)
+	for _, s := range symbols {
+		for _, n := range dataFields {
+			name := fmt.Sprintf("%s-%s", s, n)
+			accs[name] = accum.NewIntervals()
+			for k, v := range windowIntervals {
+				accs[name].AddInterval(k, v, cnt[k])
+				for _, m := range metrics {
+					allFields = append(allFields, fmt.Sprintf("%s-%s-%s-%s", s, n, m, k))
+				}
+			}
+		}
+	}
+	return accs
 }
 
-func getHeader(keys []string) []string {
-	row := []string{"timestamp"}
-	for _, k := range keys {
-		for _, spec := range features {
-			row = append(row, fmt.Sprintf("%s-%s", k, spec.name))
+func getVector(accs map[string]*accum.Intervals) map[string]float64 {
+	vec := make(map[string]float64)
+	for k, acc := range accs {
+		values := acc.GetValues()
+		for i, f := range values {
+			for m, v := range f {
+				vec[fmt.Sprintf("%s-%s-%s", k, m, i)] = v
+			}
 		}
 	}
 
-	return row
+	return vec
 }
 
-func getFeatures(windows map[string]*rolling.Window, keys []string) []string {
+func key(symbol, field, metric, interval string) string {
+	return fmt.Sprintf("%s-%s-%s-%s", symbol, field, metric, interval)
+}
+
+func getHeader(keys []string) []string {
+	return append([]string{"timestamp"}, allFields...)
+}
+
+func getFeatures(windows map[string]*accum.Accumulator, keys []string) []string {
 	row := []string{
 		strconv.FormatInt(time.Now().UnixMilli(), 10),
 	}
@@ -83,14 +106,14 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Initialize rolling windows for the feature vector.
+	// Initialize accumulators for the feature vector.
 	keys := []string{}
-	windows := make(map[string]*rolling.Window)
+	windows := make(map[string]accum.Accumulator)
 	for _, s := range symbols {
-		for n, d := range windowIntervals {
+		for n := range windowIntervals {
 			for _, f := range dataFields {
 				k := key(s, n, f)
-				windows[k] = rolling.NewWindow(10000, d)
+				windows[k] = accum.New()
 				keys = append(keys, k)
 			}
 		}

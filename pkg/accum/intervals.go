@@ -73,3 +73,15 @@ func (i *Intervals) Observe(now time.Time, v float64) {
 		i.intervals[j].accs[idx] = NewFromAccs(i.intervals[j-1].accs)
 	}
 }
+
+
+// GetValues returns all aggregated values one accumulator per interval.
+// It returnes last "closed one", or the one before current.
+func (i *Intervals) GetValues() map[string]map[string]float64 {
+	vals := make(map[string]map[string]float64, len(i.intervals))
+	for j, ci := range i.intervals {
+		idx := (i.intervals[j].lastAccIdx + len(i.intervals[j].accs) - 1) % len(i.intervals[j].accs)
+		vals[ci.name] = i.intervals[j].accs[idx].Values()
+	}
+	return vals
+}

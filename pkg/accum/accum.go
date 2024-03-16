@@ -120,3 +120,15 @@ func (a *Accumulator) Avg() float64 {
 
 	return a.sum / float64(a.cnt)
 }
+
+func (a *Accumulator) Values() map[string]float64 {
+	return map[string]float64{
+		"min":   a.Min(),
+		"max":   a.Max(),
+		"first": a.First(),
+		"last":  a.Last(),
+		"avg":   a.Avg(),
+		"sum":   a.Sum(),
+		"count": float64(a.Count()),
+	}
+}
