@@ -38,10 +38,10 @@ var (
 		"1_hour": time.Hour,
 	}
 	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
-	allFields  []string
 )
 
-func initAcc(symbols []string) map[string]*accum.Intervals {
+func initAccs(symbols []string) (map[string]*accum.Intervals, []string) {
+	allFields := make([]string, 0)
 	cnt := map[string]int{
 		"1_sec":  15,
 		"15_sec": 4,
@@ -57,23 +57,37 @@ func initAcc(symbols []string) map[string]*accum.Intervals {
 			for k, v := range windowIntervals {
 				accs[name].AddInterval(k, v, cnt[k])
 				for _, m := range metrics {
-					allFields = append(allFields, fmt.Sprintf("%s-%s-%s-%s", s, n, m, k))
+					allFields = append(allFields, key(s, n, m, k))
 				}
 			}
 		}
 	}
-	return accs
+	sort.Strings(allFields)
+
+	return accs, allFields
 }
 
-func getVector(accs map[string]*accum.Intervals) map[string]float64 {
-	vec := make(map[string]float64)
-	for k, acc := range accs {
-		values := acc.GetValues()
-		for i, f := range values {
-			for m, v := range f {
-				vec[fmt.Sprintf("%s-%s-%s", k, m, i)] = v
+// getVector returns the feature vector from the accumulators.
+func getVector(accs map[string]*accum.Intervals, allFields []string) []float64 {
+	values := make(map[string]float64, len(allFields))
+	vec := make([]float64, 0, len(allFields)+1)
+	// First field of the feature vector is the current timestamp.
+	vec = append(vec, float64(time.Now().UnixMilli()))
+
+	for _, s := range symbols {
+		for _, n := range dataFields {
+			name := fmt.Sprintf("%s-%s", s, n)
+			vals := accs[name].GetValues()
+			for i, f := range vals {
+				for m, v := range f {
+					values[key(s, n, m, i)] = v
+				}
 			}
 		}
+	}
+
+	for _, f := range allFields {
+		vec = append(vec, values[f])
 	}
 
 	return vec
@@ -83,20 +97,18 @@ func key(symbol, field, metric, interval string) string {
 	return fmt.Sprintf("%s-%s-%s-%s", symbol, field, metric, interval)
 }
 
-func getHeader(keys []string) []string {
+func getHeader(allFields []string) []string {
 	return append([]string{"timestamp"}, allFields...)
 }
 
-func getFeatures(windows map[string]*accum.Accumulator, keys []string) []string {
+// getFeatures returns ordered list of string.
+func getFeatures(vec map[string]float64, allFields []string) []string {
 	row := []string{
+		// First field of the feature vector is the current timestamp.
 		strconv.FormatInt(time.Now().UnixMilli(), 10),
 	}
-	for _, k := range keys {
-		window := windows[k]
-
-		for _, spec := range features {
-			row = append(row, strconv.FormatFloat(spec.fn(window), 'f', -1, 64))
-		}
+	for _, f := range allFields {
+		row = append(row, strconv.FormatFloat(vec[f], 'f', -1, 64))
 	}
 
 	return row
@@ -107,18 +119,8 @@ func main() {
 	defer cancel()
 
 	// Initialize accumulators for the feature vector.
-	keys := []string{}
-	windows := make(map[string]accum.Accumulator)
-	for _, s := range symbols {
-		for n := range windowIntervals {
-			for _, f := range dataFields {
-				k := key(s, n, f)
-				windows[k] = accum.New()
-				keys = append(keys, k)
-			}
-		}
-	}
-	sort.Strings(keys)
+	accs := initAccs(symbols)
+	sort.Strings(allFields)
 
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
