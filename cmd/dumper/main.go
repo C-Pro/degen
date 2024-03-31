@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"encoding/csv"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,12 +52,12 @@ func initAccs(symbols []string) (map[string]*accum.Intervals, []string) {
 	accs := make(map[string]*accum.Intervals)
 	for _, s := range symbols {
 		for _, n := range dataFields {
-			name := fmt.Sprintf("%s-%s", s, n)
+			name := key(s, n)
 			accs[name] = accum.NewIntervals()
 			for k, v := range windowIntervals {
 				accs[name].AddInterval(k, v, cnt[k])
 				for _, m := range metrics {
-					allFields = append(allFields, key(s, n, m, k))
+					allFields = append(allFields, key(name, m, k))
 				}
 			}
 		}
@@ -76,11 +76,11 @@ func getVector(accs map[string]*accum.Intervals, allFields []string) []float64 {
 
 	for _, s := range symbols {
 		for _, n := range dataFields {
-			name := fmt.Sprintf("%s-%s", s, n)
+			name := key(s, n)
 			vals := accs[name].GetValues()
 			for i, f := range vals {
 				for m, v := range f {
-					values[key(s, n, m, i)] = v
+					values[key(name, m, i)] = v
 				}
 			}
 		}
@@ -93,22 +93,21 @@ func getVector(accs map[string]*accum.Intervals, allFields []string) []float64 {
 	return vec
 }
 
-func key(symbol, field, metric, interval string) string {
-	return fmt.Sprintf("%s-%s-%s-%s", symbol, field, metric, interval)
+// key builds the key for the the accumulator or value.
+// the order of fields is: symbol, field, metric, interval.
+func key(v ...string) string {
+	return strings.Join(v, "-")
 }
 
 func getHeader(allFields []string) []string {
 	return append([]string{"timestamp"}, allFields...)
 }
 
-// getFeatures returns ordered list of string.
-func getFeatures(vec map[string]float64, allFields []string) []string {
-	row := []string{
-		// First field of the feature vector is the current timestamp.
-		strconv.FormatInt(time.Now().UnixMilli(), 10),
-	}
-	for _, f := range allFields {
-		row = append(row, strconv.FormatFloat(vec[f], 'f', -1, 64))
+// vecToString converts the feature vector to a string slice.
+func vecToString(vec []float64) []string {
+	row := make([]string, 0, len(vec))
+	for _, f := range vec {
+		row = append(row, strconv.FormatFloat(f, 'f', -1, 64))
 	}
 
 	return row
@@ -119,8 +118,7 @@ func main() {
 	defer cancel()
 
 	// Initialize accumulators for the feature vector.
-	accs := initAccs(symbols)
-	sort.Strings(allFields)
+	accs, allFields := initAccs(symbols)
 
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -161,7 +159,7 @@ func main() {
 
 	// If file is empty, write header.
 	if stat, err := f.Stat(); err == nil && stat.Size() == 0 {
-		if err := w.Write(getHeader(keys)); err != nil {
+		if err := w.Write(getHeader(allFields)); err != nil {
 			log.Fatalf("failed to write header to csv: %v", err)
 		}
 	}
@@ -170,6 +168,8 @@ func main() {
 		w.Flush()
 		f.Close()
 	}()
+	btcBidIdx := slices.Index(allFields, "btcusdt-bid_price-avg-1_sec")
+	btcAskIdx := slices.Index(allFields, "btcusdt-ask_price-avg-1_sec")
 
 	go func() {
 		i := uint64(0)
@@ -183,15 +183,14 @@ func main() {
 			}
 
 			mux.RLock()
-			row := getFeatures(windows, keys)
+			row := getVector(accs, allFields)
 			log.Printf("%s: BTC: %06.02f",
 				time.Now().Format(time.RFC3339),
-				(windows[key("btcusdt", "1_sec", "bid_price")].Avg()+
-					windows[key("btcusdt", "1_sec", "ask_price")].Avg())/2,
+				(row[btcBidIdx]+row[btcAskIdx])/2,
 			)
 			mux.RUnlock()
 
-			err := w.Write(row)
+			err := w.Write(vecToString(row))
 			if err != nil {
 				log.Printf("failed to write row to csv: %v", err)
 			}
@@ -205,27 +204,23 @@ func main() {
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
-			for n := range windowIntervals {
-				mux.Lock()
-				windows[key(msg.Symbol, n, "ask_price")].Add(bbo.Ask.Price.InexactFloat64())
-				windows[key(msg.Symbol, n, "bid_price")].Add(bbo.Bid.Price.InexactFloat64())
-				windows[key(msg.Symbol, n, "ask_size")].Add(bbo.Ask.Size.InexactFloat64())
-				windows[key(msg.Symbol, n, "bid_size")].Add(bbo.Bid.Size.InexactFloat64())
-				mux.Unlock()
-			}
+			mux.Lock()
+			accs[key(msg.Symbol, "bid_price")].Observe(time.Now(), bbo.Bid.Price.InexactFloat64())
+			accs[key(msg.Symbol, "ask_price")].Observe(time.Now(), bbo.Ask.Price.InexactFloat64())
+			accs[key(msg.Symbol, "bid_size")].Observe(time.Now(), bbo.Bid.Size.InexactFloat64())
+			accs[key(msg.Symbol, "ask_size")].Observe(time.Now(), bbo.Ask.Size.InexactFloat64())
+			mux.Unlock()
 		case models.MsgTypeTrade:
 			trade := msg.Payload.(models.Trade)
-			for n := range windowIntervals {
-				mux.Lock()
-				if trade.Side == models.OrderSideBuy {
-					windows[key(msg.Symbol, n, "buy_volume")].Add(trade.Size.InexactFloat64())
-					windows[key(msg.Symbol, n, "buy_price")].Add(trade.Price.InexactFloat64())
-				} else {
-					windows[key(msg.Symbol, n, "sell_volume")].Add(trade.Size.InexactFloat64())
-					windows[key(msg.Symbol, n, "sell_price")].Add(trade.Price.InexactFloat64())
-				}
-				mux.Unlock()
+			mux.Lock()
+			if trade.Side == models.OrderSideBuy {
+				accs[key(msg.Symbol, "buy_volume")].Observe(time.Now(), trade.Size.InexactFloat64())
+				accs[key(msg.Symbol, "buy_price")].Observe(time.Now(), trade.Price.InexactFloat64())
+			} else {
+				accs[key(msg.Symbol, "sell_volume")].Observe(time.Now(), trade.Size.InexactFloat64())
+				accs[key(msg.Symbol, "sell_price")].Observe(time.Now(), trade.Price.InexactFloat64())
 			}
+			mux.Unlock()
 		default:
 			continue
 		}
