@@ -141,6 +141,11 @@ func (w *Window) Evict() {
 		w.head = w.head.next
 	}
 
+	// If all records are evicted, the tail should also be nil.
+	if w.head == nil {
+		w.tail = nil
+	}
+
 	if w.cnt == 0 {
 		w.sum = math.NaN()
 		w.min = math.MaxFloat64

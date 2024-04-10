@@ -1,0 +1,8 @@
+[[IgnoredVulns]]
+id = "GO-2023-2185"
+reason = "not applicable"
+
+[[IgnoredVulns]]
+id = "GO-2023-2186"
+reason = "not applicable"
+

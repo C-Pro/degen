@@ -79,6 +79,7 @@ func (bts *Binance) wsReconnectLoop(
 	once *sync.Once,
 	ready chan any,
 ) {
+	var connectedAt time.Time
 	for {
 		endpoint := fmt.Sprintf("%s/ws", wsBaseURL)
 		lk := bts.getListenKey()
@@ -97,15 +98,18 @@ func (bts *Binance) wsReconnectLoop(
 				continue
 			}
 		}
+		connectedAt = time.Now()
 
 		var toSubscribe []string
 		bts.mux.RLock()
 		if len(bts.subscribedStreams) > 0 {
 			toSubscribe = bts.subscribedStreams
+			bts.subscribedStreams = bts.subscribedStreams[:0]
 		}
 		bts.mux.RUnlock()
 
 		if len(toSubscribe) > 0 {
+			log.Printf("subscribing: %q", strings.Join(toSubscribe, ","))
 			if err := bts.subscribeStreams(ctx, toSubscribe); err != nil {
 				log.Printf("binance websocket subscribe error: %v", err)
 				select {
@@ -119,10 +123,16 @@ func (bts *Binance) wsReconnectLoop(
 
 		once.Do(func() { close(ready) })
 
+	ignore:
 		select {
 		case <-ctx.Done():
 			return
-		case <-bts.reconnectCh:
+		case reason := <-bts.reconnectCh:
+			if time.Since(connectedAt) < time.Second*10 {
+				goto ignore
+			}
+			log.Printf("reconnecting: %s", reason)
+			bts.ws.Close()
 			continue
 		}
 	}
@@ -248,37 +258,62 @@ type aggTrade struct {
 }
 
 func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+	errCnt := 0
 	rawCh := make(chan []byte, 100)
 	go func() {
 		for {
-			if err := bts.ws.Listen(ctx, rawCh); err != nil {
+			err := bts.ws.Listen(rawCh)
+			if err != nil {
 				log.Printf("binance.Listen returned: %v\n", err)
 			}
 
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			default:
+				msg := "normal close"
+				if err != nil {
+					msg = err.Error()
+				}
+				bts.reconnectCh <- msg
 				// wait for some time before reconnecting
-				log.Println("binance.Listen reconnecting")
-				bts.reconnectCh <- "reconnect, please"
+				time.Sleep(time.Second)
 			}
 		}
 	}()
 
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
 	for {
+	loop:
+		if errCnt > 10 {
+			bts.reconnectCh <- "too many errors"
+			errCnt = 0
+			goto loop
+		}
+
 		select {
+		case <-ticker.C:
+			ts := atomic.LoadInt64(&bts.lastReceived)
+			if time.Since(time.Unix(0, ts)) > bts.idleTimeout {
+				bts.reconnectCh <- fmt.Sprintf("no messages for %s", bts.idleTimeout)
+				time.Sleep(time.Second)
+				goto loop
+			}
 		case msg := <-rawCh:
 			var r subscribeResponse
 			if err := json.Unmarshal(msg, &r); err != nil {
 				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
-				break
+				errCnt++
+				goto loop
 			}
 
 			if r.ID > 0 {
 				if r.Result != nil {
 					log.Printf("message id=%d returned result %q", r.ID, *r.Result)
-					break
+					errCnt++
+					goto loop
 				}
 
 				bts.mux.RLock()
@@ -286,40 +321,48 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 				if !ok {
 					log.Printf("unsolicted message id=%d returned result %q", r.ID, *r.Result)
 					bts.mux.RUnlock()
-					break
+					goto loop
 				}
 				bts.mux.RUnlock()
 
 				bts.mux.Lock()
 				bts.subscribedStreams = append(bts.subscribedStreams, streams...)
 				bts.mux.Unlock()
-				break
+				errCnt = 0
+				goto loop
 			}
 
 			var e dummyEvent
 			if err := json.Unmarshal(msg, &e); err != nil {
 				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
-				break
+				errCnt++
+				goto loop
 			}
+
+			atomic.StoreInt64(&bts.lastReceived, time.Now().UnixNano())
 
 			switch e.Event {
 			case "ORDER_TRADE_UPDATE":
 				var upd orderUpdate
 				if err := json.Unmarshal(msg, &upd); err != nil {
+					errCnt++
 					log.Printf("failed to unmarshal ORDER_TRADE_UPDATE: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 
 				o := upd.Order
 				size, err := decimal.NewFromString(o.FilledSize)
 				if err != nil {
 					log.Printf("failed to parse filled size: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 				price, err := decimal.NewFromString(o.AveragePrice)
 				if err != nil {
 					log.Printf("failed to parse average price: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 
 				ch <- models.ExchangeMessage{
@@ -338,11 +381,13 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						AveragePrice:    price,
 					},
 				}
+				errCnt = 0
 			case "ACCOUNT_UPDATE":
 				var upd accountUpdate
 				if err := json.Unmarshal(msg, &upd); err != nil {
 					log.Printf("failed to unmarshal account update: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 
 				for _, b := range upd.Update.Balances {
@@ -369,11 +414,13 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						},
 					}
 				}
+				errCnt = 0
 			case "bookTicker":
 				var ticker bookTicker
 				if err := json.Unmarshal(msg, &ticker); err != nil {
 					log.Printf("failed to unmarshal bookTicker: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 
 				if ticker.Symbol != "" {
@@ -396,11 +443,14 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						},
 					}
 				}
+
+				errCnt = 0
 			case "aggTrade":
 				var trade aggTrade
 				if err := json.Unmarshal(msg, &trade); err != nil {
 					log.Printf("failed to unmarshal aggTrade: %v %q", err, string(msg))
-					break
+					errCnt++
+					goto loop
 				}
 
 				if trade.Symbol != "" {
@@ -421,8 +471,9 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						},
 					}
 				}
+				errCnt = 0
 			default:
-				log.Printf("unknown event type: %q\n%q", e.Event, string(msg))
+				log.Printf("unsupported event type: %q\n%q", e.Event, string(msg))
 			}
 		case <-ctx.Done():
 			return

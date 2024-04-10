@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,67 +13,89 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/c-pro/rolling"
-
+	"degen/pkg/accum"
 	"degen/pkg/connectors/binance"
+	"degen/pkg/csvwriter"
 	"degen/pkg/models"
-)
-
-type (
-	featureFn   func(*rolling.Window) float64
-	featureSpec struct {
-		name string
-		fn   featureFn
-	}
 )
 
 var (
 	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
+	metrics         = []string{"min", "max", "first", "last", "avg", "sum", "count"}
 	windowIntervals = map[string]time.Duration{
 		"1_sec":  time.Second,
-		"5_sec":  5 * time.Second,
-		"30_sec": 30 * time.Second,
+		"15_sec": time.Second * 15,
 		"1_min":  time.Minute,
-		"5_min":  5 * time.Minute,
-		"10_min": 10 * time.Minute,
+		"15_min": time.Minute * 15,
+		"1_hour": time.Hour,
 	}
 	dataFields = []string{"bid_price", "bid_size", "ask_price", "ask_size", "buy_volume", "sell_volume", "buy_price", "sell_price"}
-	features   = []featureSpec{
-		{"min", func(w *rolling.Window) float64 { return w.Min() }},
-		{"max", func(w *rolling.Window) float64 { return w.Max() }},
-		{"first", func(w *rolling.Window) float64 { return w.First() }},
-		{"last", func(w *rolling.Window) float64 { return w.Last() }},
-		{"mid", func(w *rolling.Window) float64 { return w.Mid() }},
-		{"avg", func(w *rolling.Window) float64 { return w.Avg() }},
-		{"sum", func(w *rolling.Window) float64 { return w.Sum() }},
-		{"count", func(w *rolling.Window) float64 { return float64(w.Count()) }},
-	}
 )
 
-func key(symbol, interval, field string) string {
-	return fmt.Sprintf("%s-%s-%s", symbol, interval, field)
+func initAccs(symbols []string) (map[string]*accum.Intervals, []string) {
+	allFields := make([]string, 0)
+	cnt := map[string]int{
+		"1_sec":  15,
+		"15_sec": 4,
+		"1_min":  15,
+		"15_min": 4,
+		"1_hour": 1,
+	}
+	accs := make(map[string]*accum.Intervals)
+	for _, s := range symbols {
+		for _, n := range dataFields {
+			name := key(s, n)
+			accs[name] = accum.NewIntervals()
+			for k, v := range windowIntervals {
+				accs[name].AddInterval(k, v, cnt[k])
+				for _, m := range metrics {
+					allFields = append(allFields, key(name, m, k))
+				}
+			}
+		}
+	}
+	sort.Strings(allFields)
+
+	return accs, allFields
 }
 
-func getHeader(keys []string) []string {
-	row := []string{"timestamp"}
-	for _, k := range keys {
-		for _, spec := range features {
-			row = append(row, fmt.Sprintf("%s-%s", k, spec.name))
+// getVector returns the feature vector from the accumulators.
+func getVector(accs map[string]*accum.Intervals, allFields []string) []float64 {
+	values := make(map[string]float64, len(allFields))
+	vec := make([]float64, 0, len(allFields)+1)
+	// First field of the feature vector is the current timestamp.
+	vec = append(vec, float64(time.Now().UnixMilli()))
+
+	for _, s := range symbols {
+		for _, n := range dataFields {
+			name := key(s, n)
+			vals := accs[name].GetValues()
+			for i, f := range vals {
+				for m, v := range f {
+					values[key(name, m, i)] = v
+				}
+			}
 		}
 	}
 
-	return row
+	for _, f := range allFields {
+		vec = append(vec, values[f])
+	}
+
+	return vec
 }
 
-func getFeatures(windows map[string]*rolling.Window, keys []string) []string {
-	row := []string{}
+// key builds the key for the the accumulator or value.
+// the order of fields is: symbol, field, metric, interval.
+func key(v ...string) string {
+	return strings.Join(v, "-")
+}
 
-	for _, k := range keys {
-		window := windows[k]
-		row = append(row, strconv.FormatInt(time.Now().UnixMilli(), 10))
-		for _, spec := range features {
-			row = append(row, strconv.FormatFloat(spec.fn(window), 'f', -1, 64))
-		}
+// vecToString converts the feature vector to a string slice.
+func vecToString(vec []float64) []string {
+	row := make([]string, 0, len(vec))
+	for _, f := range vec {
+		row = append(row, strconv.FormatFloat(f, 'f', -1, 64))
 	}
 
 	return row
@@ -84,19 +105,8 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Initialize rolling windows for the feature vector.
-	keys := []string{}
-	windows := make(map[string]*rolling.Window)
-	for _, s := range symbols {
-		for n, d := range windowIntervals {
-			for _, f := range dataFields {
-				k := key(s, n, f)
-				windows[k] = rolling.NewWindow(86400, d)
-				keys = append(keys, k)
-			}
-		}
-	}
-	sort.Strings(keys)
+	// Initialize accumulators for the feature vector.
+	accs, allFields := initAccs(symbols)
 
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -127,25 +137,15 @@ func main() {
 		return
 	}
 
-	f, err := os.OpenFile("binance.csv", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	w, err := csvwriter.NewCSVWriter(ctx, ".", "binance", allFields, csvwriter.IntervalHourly)
 	if err != nil {
-		log.Fatalf("failed to open file: %v", err)
+		log.Fatalf("failed to create csv writer: %v", err)
 	}
 
-	w := csv.NewWriter(f)
 	mux := &sync.RWMutex{}
 
-	// If file is empty, write header.
-	if stat, err := f.Stat(); err == nil && stat.Size() == 0 {
-		if err := w.Write(getHeader(keys)); err != nil {
-			log.Fatalf("failed to write header to csv: %v", err)
-		}
-	}
-
-	defer func() {
-		w.Flush()
-		f.Close()
-	}()
+	btcBidIdx := slices.Index(allFields, "btcusdt-bid_price-avg-1_sec")
+	btcAskIdx := slices.Index(allFields, "btcusdt-ask_price-avg-1_sec")
 
 	go func() {
 		i := uint64(0)
@@ -159,21 +159,14 @@ func main() {
 			}
 
 			mux.RLock()
-			row := getFeatures(windows, keys)
-			if i%60 == 0 {
-				log.Printf("%s: BTC: %06.02f",
-					time.Now().Format(time.RFC3339),
-					(windows[key("btcusdt", "1_sec", "bid_price")].Avg()+
-						windows[key("btcusdt", "1_sec", "ask_price")].Avg())/2,
-				)
-			}
+			row := getVector(accs, allFields)
+			log.Printf("%s: BTC: %06.02f",
+				time.Now().Format(time.RFC3339),
+				(row[btcBidIdx]+row[btcAskIdx])/2,
+			)
 			mux.RUnlock()
 
-			err := w.Write(row)
-			if err != nil {
-				log.Printf("failed to write row to csv: %v", err)
-			}
-			w.Flush()
+			w.WriteRow(vecToString(row))
 			i++
 		}
 	}()
@@ -183,28 +176,23 @@ func main() {
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
-
-			for n := range windowIntervals {
-				mux.Lock()
-				windows[key(msg.Symbol, n, "ask_price")].Add(bbo.Ask.Price.InexactFloat64())
-				windows[key(msg.Symbol, n, "bid_price")].Add(bbo.Bid.Price.InexactFloat64())
-				windows[key(msg.Symbol, n, "ask_size")].Add(bbo.Ask.Size.InexactFloat64())
-				windows[key(msg.Symbol, n, "bid_size")].Add(bbo.Bid.Size.InexactFloat64())
-				mux.Unlock()
-			}
+			mux.Lock()
+			accs[key(msg.Symbol, "bid_price")].Observe(time.Now(), bbo.Bid.Price.InexactFloat64())
+			accs[key(msg.Symbol, "ask_price")].Observe(time.Now(), bbo.Ask.Price.InexactFloat64())
+			accs[key(msg.Symbol, "bid_size")].Observe(time.Now(), bbo.Bid.Size.InexactFloat64())
+			accs[key(msg.Symbol, "ask_size")].Observe(time.Now(), bbo.Ask.Size.InexactFloat64())
+			mux.Unlock()
 		case models.MsgTypeTrade:
 			trade := msg.Payload.(models.Trade)
-			for n := range windowIntervals {
-				mux.Lock()
-				if trade.Side == models.OrderSideBuy {
-					windows[key(msg.Symbol, n, "buy_volume")].Add(trade.Size.InexactFloat64())
-					windows[key(msg.Symbol, n, "buy_price")].Add(trade.Price.InexactFloat64())
-				} else {
-					windows[key(msg.Symbol, n, "sell_volume")].Add(trade.Size.InexactFloat64())
-					windows[key(msg.Symbol, n, "sell_price")].Add(trade.Price.InexactFloat64())
-				}
-				mux.Unlock()
+			mux.Lock()
+			if trade.Side == models.OrderSideBuy {
+				accs[key(msg.Symbol, "buy_volume")].Observe(time.Now(), trade.Size.InexactFloat64())
+				accs[key(msg.Symbol, "buy_price")].Observe(time.Now(), trade.Price.InexactFloat64())
+			} else {
+				accs[key(msg.Symbol, "sell_volume")].Observe(time.Now(), trade.Size.InexactFloat64())
+				accs[key(msg.Symbol, "sell_price")].Observe(time.Now(), trade.Price.InexactFloat64())
 			}
+			mux.Unlock()
 		default:
 			continue
 		}

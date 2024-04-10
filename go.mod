@@ -1,9 +1,9 @@
 module degen
 
-go 1.19
+go 1.22.2
 
 require (
-	github.com/c-pro/rolling v0.0.0-20230719090925-f64bebf524bd
+	github.com/c-pro/rolling v0.0.0-20231111044043-1a5d3e7091f5
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.4.1
 	github.com/mailru/easyjson v0.7.7
