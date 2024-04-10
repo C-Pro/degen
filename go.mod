@@ -1,6 +1,6 @@
 module degen
 
-go 1.21.4
+go 1.22.2
 
 require (
 	github.com/c-pro/rolling v0.0.0-20231111044043-1a5d3e7091f5
