@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +15,7 @@ import (
 
 	"degen/pkg/accum"
 	"degen/pkg/connectors/binance"
+	"degen/pkg/csvwriter"
 	"degen/pkg/models"
 )
 
@@ -149,25 +149,13 @@ func main() {
 		return
 	}
 
-	f, err := os.OpenFile("binance.csv", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	w, err := csvwriter.NewCSVWriter(ctx, ".", "binance", allFields, csvwriter.IntervalHourly)
 	if err != nil {
-		log.Fatalf("failed to open file: %v", err)
+		log.Fatalf("failed to create csv writer: %v", err)
 	}
 
-	w := csv.NewWriter(f)
 	mux := &sync.RWMutex{}
 
-	// If file is empty, write header.
-	if stat, err := f.Stat(); err == nil && stat.Size() == 0 {
-		if err := w.Write(getHeader(allFields)); err != nil {
-			log.Fatalf("failed to write header to csv: %v", err)
-		}
-	}
-
-	defer func() {
-		w.Flush()
-		f.Close()
-	}()
 	btcBidIdx := slices.Index(allFields, "btcusdt-bid_price-avg-1_sec")
 	btcAskIdx := slices.Index(allFields, "btcusdt-ask_price-avg-1_sec")
 
@@ -190,11 +178,7 @@ func main() {
 			)
 			mux.RUnlock()
 
-			err := w.Write(vecToString(row))
-			if err != nil {
-				log.Printf("failed to write row to csv: %v", err)
-			}
-			w.Flush()
+			w.WriteRow(vecToString(row))
 			i++
 		}
 	}()
