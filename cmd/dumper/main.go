@@ -19,14 +19,6 @@ import (
 	"degen/pkg/models"
 )
 
-type (
-	featureFn   func(*accum.Intervals) float64
-	featureSpec struct {
-		name string
-		fn   featureFn
-	}
-)
-
 var (
 	symbols         = []string{"ethusdt", "btcusdt", "dogeusdt", "solusdt", "bnbusdt"}
 	metrics         = []string{"min", "max", "first", "last", "avg", "sum", "count"}
@@ -97,10 +89,6 @@ func getVector(accs map[string]*accum.Intervals, allFields []string) []float64 {
 // the order of fields is: symbol, field, metric, interval.
 func key(v ...string) string {
 	return strings.Join(v, "-")
-}
-
-func getHeader(allFields []string) []string {
-	return append([]string{"timestamp"}, allFields...)
 }
 
 // vecToString converts the feature vector to a string slice.
