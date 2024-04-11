@@ -11,6 +11,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const pingInterval = time.Second * 15
+
 type WS struct {
 	conn       *websocket.Conn
 	connCtx    context.Context
@@ -39,6 +41,7 @@ func (ws *WS) Connect(ctx context.Context, url string) error {
 }
 
 func (ws *WS) Listen(ch chan<- []byte) error {
+	lastPing := time.Now()
 	for {
 		typ, msg, err := ws.conn.ReadMessage()
 		if err != nil {
@@ -47,9 +50,18 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 		}
 
 		if typ == websocket.PingMessage {
-			//nolint:errcheck
-			ws.conn.WriteMessage(websocket.PongMessage, msg)
-			continue
+			if err := ws.conn.WriteMessage(websocket.PongMessage, msg); err != nil {
+				ws.connCancel()
+				return fmt.Errorf("websocket.Pong error: %v", err)
+			}
+		}
+
+		if time.Since(lastPing) > pingInterval {
+			if err := ws.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				ws.connCancel()
+				return fmt.Errorf("websocket.Ping error: %v", err)
+			}
+			lastPing = time.Now()
 		}
 
 		ch <- msg
@@ -58,7 +70,6 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 		case <-ws.connCtx.Done():
 			return ws.conn.Close()
 		default:
-			time.Sleep(time.Millisecond)
 		}
 	}
 }
