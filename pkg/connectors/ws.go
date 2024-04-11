@@ -39,6 +39,7 @@ func (ws *WS) Connect(ctx context.Context, url string) error {
 }
 
 func (ws *WS) Listen(ch chan<- []byte) error {
+	lastPing := time.Now()
 	for {
 		typ, msg, err := ws.conn.ReadMessage()
 		if err != nil {
@@ -52,13 +53,18 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 			continue
 		}
 
+		if time.Since(lastPing) > time.Second*30 {
+			//nolint:errcheck
+			ws.conn.WriteMessage(websocket.PingMessage, nil)
+			lastPing = time.Now()
+		}
+
 		ch <- msg
 
 		select {
 		case <-ws.connCtx.Done():
 			return ws.conn.Close()
 		default:
-			time.Sleep(time.Millisecond)
 		}
 	}
 }

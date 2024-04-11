@@ -147,8 +147,8 @@ func (w *CSVWriter) run(ctx context.Context) {
 			cntErr = 0
 
 			w.file = f
-			lastRun = time.Now()
 		}
+		lastRun = time.Now()
 
 		select {
 		case <-ctx.Done():

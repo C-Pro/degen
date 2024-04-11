@@ -137,7 +137,7 @@ func main() {
 		return
 	}
 
-	w, err := csvwriter.NewCSVWriter(ctx, ".", "binance", allFields, csvwriter.IntervalHourly)
+	w, err := csvwriter.NewCSVWriter(ctx, ".", "binance", allFields, csvwriter.IntervalDaily)
 	if err != nil {
 		log.Fatalf("failed to create csv writer: %v", err)
 	}
