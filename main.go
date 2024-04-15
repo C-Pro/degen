@@ -122,13 +122,13 @@ func main() {
 			log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
 			monkey.See(msg)
 		case models.MsgTypeOrderStatus:
-			upd := msg.Payload.(models.OrderUpdate)
+			upd := msg.Payload.(models.Order)
 			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
 			continue
 		case models.MsgTypeBalanceUpdate:
 			upd := msg.Payload.(models.BalanceUpdate)
 			// log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
-			acc.UpdateBalance(upd.Asset, upd.Balance, msg.Timestamp)
+			acc.UpdateBalance(upd.Asset, upd.Balance, decimal.Zero, msg.Timestamp)
 			once.Do(func() {
 				initialBalance = upd.Balance
 			})
