@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -9,37 +10,105 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type exchange interface {
+	GetAccountInfo(ctx context.Context) (*AccountInfo, error)
+	PlaceOrder(ctx context.Context, order Order) (*Order, error)
+	CancelOrder(ctx context.Context, order Order) (*Order, error)
+	Listen(ctx context.Context, ch chan<- ExchangeMessage)
+	SubscribeBookTickers(ctx context.Context, symbols []string) error
+	SubscribeBookAggTrades(ctx context.Context, symbols []string) error
+}
+
+type AccountInfo struct {
+	Balances  map[string]Balance
+	Positions map[string]Position
+	UpdatedAt time.Time
+}
+
 type Account struct {
 	id        string
-	exchange  string
+	api       exchange
 	balances  map[string]Balance
 	positions map[string]Position
 	orders    geche.Geche[string, Order]
+	stopWg    sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
 
 	mux sync.RWMutex
 }
 
-func NewAccount(id, exchange string) *Account {
+func NewAccount(id string, api exchange) *Account {
 	return &Account{
 		id:        id,
-		exchange:  exchange,
+		api:       api,
 		balances:  make(map[string]Balance),
 		positions: make(map[string]Position),
 		orders:    geche.NewKV[Order](geche.NewMapCache[string, Order]()),
 	}
 }
 
+func (a *Account) Start(ctx context.Context) error {
+	info, err := a.api.GetAccountInfo(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get initial account info: %w", err)
+	}
+
+	a.balances = info.Balances
+	a.positions = info.Positions
+
+	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.stopWg.Add(2)
+	ch := make(chan ExchangeMessage, 100)
+	go func() {
+		a.api.Listen(a.ctx, ch)
+		a.stopWg.Done()
+	}()
+
+	go func() {
+		a.updateLoop(a.ctx, ch)
+		a.stopWg.Done()
+	}()
+
+	return nil
+}
+
+func (a *Account) SubscribeSymbols(symbols []string) error {
+	if err := a.api.SubscribeBookAggTrades(a.ctx, symbols); err != nil {
+		return fmt.Errorf("failed to subscribe %v", err)
+	}
+	if err := a.api.SubscribeBookTickers(a.ctx, symbols); err != nil {
+		return fmt.Errorf("failed to subscribe %v", err)
+	}
+	return nil
+}
+
+func (a *Account) Stop() {
+	a.cancel()
+	a.stopWg.Wait()
+}
+
+func (a *Account) updateLoop(ctx context.Context, ch chan ExchangeMessage) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			if err := a.Update(msg); err != nil {
+				return
+			}
+		}
+	}
+}
+
 type Balance struct {
-	Balance   decimal.Decimal
-	Locked    decimal.Decimal
+	Total     decimal.Decimal
+	Available decimal.Decimal
 	UpdatedAt time.Time
 }
 
-func (b *Balance) Available() decimal.Decimal {
-	return b.Balance.Sub(b.Locked)
-}
-
 type Position struct {
+	// Positive amount means long position, negative - short.
 	Amount     decimal.Decimal
 	EntryPrice decimal.Decimal
 	UpdatedAt  time.Time
@@ -55,7 +124,7 @@ func (a *Account) UpdateBalance(
 	defer a.mux.Unlock()
 
 	a.balances[asset] = Balance{
-		Balance:   balance,
+		Total:     balance,
 		UpdatedAt: updatedAt,
 	}
 }
@@ -127,4 +196,12 @@ func (a *Account) Update(upd ExchangeMessage) error {
 	}
 
 	return nil
+}
+
+func (a *Account) PlaceOrder(ctx context.Context, order Order) (*Order, error) {
+	return a.api.PlaceOrder(ctx, order)
+}
+
+func (a *Account) CancelOrder(ctx context.Context, order Order) (*Order, error) {
+	return a.api.CancelOrder(ctx, order)
 }

@@ -12,7 +12,7 @@ const Name = "binance"
 
 type Binance struct {
 	ws                   *connectors.WS
-	API                  *API
+	*API
 	subscribedStreams    []string
 	subscriptionRequests map[uint64][]string
 	lastReceived         int64
@@ -57,4 +57,8 @@ func NewBinance(
 	}
 
 	return b
+}
+
+func (b *Binance) Name() string {
+	return Name
 }

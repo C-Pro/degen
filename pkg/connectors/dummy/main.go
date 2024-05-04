@@ -21,3 +21,7 @@ func NewDummy(
 
 	return b
 }
+
+func (d *Dummy) Name() string {
+	return Name
+}

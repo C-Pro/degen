@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"degen/pkg/accounts"
 	"degen/pkg/connectors/binance"
 	"degen/pkg/models"
 	"degen/pkg/strategies"
@@ -54,8 +53,7 @@ func main() {
 		return
 	}
 
-	accs := accounts.NewAccounts()
-	acc := accs.AddAccount("monkey", binance.Name)
+	acc := models.NewAccount("binance", bnc)
 
 	monkey := strategies.NewMonkey(ctx, acc)
 	go func() {
@@ -107,8 +105,8 @@ func main() {
 			case <-time.After(time.Second):
 				b := acc.GetBalance(theAsset)
 				if b.UpdatedAt.After(lastChange) {
-					pnl := b.Balance.Sub(initialBalance)
-					log.Printf("### Current balance is %v; PNL is %v", b.Balance, pnl)
+					pnl := b.Total.Sub(initialBalance)
+					log.Printf("### Current balance is %v; PNL is %v", b.Total, pnl)
 					lastChange = b.UpdatedAt
 				}
 			}
