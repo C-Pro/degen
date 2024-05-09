@@ -152,6 +152,7 @@ func orderKey(order Order) string {
 func (a *Account) UpdateOrder(order Order) {
 	key := orderKey(order)
 	if order.Final {
+		// nolint:errcheck
 		a.orders.Del(key)
 		return
 	}
