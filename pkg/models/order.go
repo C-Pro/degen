@@ -54,6 +54,9 @@ type Order struct {
 	Type            OrderType
 	TimeInForce     TimeInForce
 	Status          OrderStatus
+	// Final flag is true when order is in its final state.
+	// E.g. filled, rejected, canceled.
+	Final bool
 
 	Size  decimal.Decimal
 	Price decimal.Decimal
@@ -62,14 +65,3 @@ type Order struct {
 	AveragePrice decimal.Decimal
 }
 
-type OrderUpdate struct {
-	ClientOrderID   string
-	ExchangeOrderID string
-	UpdatedAt       time.Time
-	Status          OrderStatus
-	Side            OrderSide
-	Symbol          string
-
-	FilledSize   decimal.Decimal
-	AveragePrice decimal.Decimal
-}

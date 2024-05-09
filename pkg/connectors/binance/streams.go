@@ -370,7 +370,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 					Symbol:    symbolFromExchange(o.Symbol),
 					Timestamp: time.Now().UTC(),
 					MsgType:   models.MsgTypeOrderStatus,
-					Payload: models.OrderUpdate{
+					Payload: models.Order{
 						ClientOrderID:   o.ClientOrderID,
 						ExchangeOrderID: strconv.FormatInt(o.ExchangeOrderID, 10),
 						UpdatedAt:       timestampToTime(o.UpdatedAtMS),
