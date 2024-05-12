@@ -2,17 +2,83 @@ package pintupro
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"time"
 
 	"degen/pkg/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-func (d *Dummy) SubscribeBookTickers(ctx context.Context, symbols []string) error {
+func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-p.reconnectCh:
+			if err := p.ws.Connect(ctx, wsBaseURL); err != nil {
+				log.Printf("pintupro websocket connect error: %v", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
+			}
+			if p.key != "" {
+				if err := p.auth(ctx); err != nil {
+					log.Printf("pintupro auth write error: %v", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(time.Second):
+						continue
+					}
+				}
+			}
+			// Connected. Subscribe to streams.
+			connectedAt = time.Now()
+
+			var toSubscribe []string
+			p.mux.RLock()
+			if len(p.subscribedStreams) > 0 {
+				toSubscribe = p.subscribedStreams
+				p.subscribedStreams = p.subscribedStreams[:0]
+			}
+			p.mux.RUnlock()
+
+			if len(toSubscribe) > 0 {
+				log.Printf("pintupro: subscribing: %q", strings.Join(toSubscribe, ","))
+				if err := p.subscribeStreams(ctx, toSubscribe); err != nil {
+					log.Printf("pintupro websocket subscribe error: %v", err)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(time.Second):
+						continue
+					}
+				}
+			}
+		}
+	}
+}
+
+func (p *PintuPro) auth(ctx context.Context) error {
+	req := WrapAndSign("public/auth", p.key, p.secret, uuid.NewString(), nil, time.Now())
+	b, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+	return p.ws.Write(ctx, b)
+}
+
+func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) error {
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -24,12 +90,12 @@ func (d *Dummy) SubscribeBookTickers(ctx context.Context, symbols []string) erro
 	for i, s := range symbols {
 		streams[i] = strings.ToLower(s) + "@bookTicker"
 	}
-	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	p.subscribedStreams = append(p.subscribedStreams, streams...)
 
 	return nil
 }
 
-func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) error {
+func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string) error {
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -41,12 +107,12 @@ func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) er
 		streams[i] = strings.ToLower(s) + "@aggTrade"
 	}
 
-	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	p.subscribedStreams = append(p.subscribedStreams, streams...)
 
 	return nil
 }
 
-func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -54,7 +120,7 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 		case <-ctx.Done():
 			return
 		default:
-			stream := d.subscribedStreams[rand.Intn(len(d.subscribedStreams))]
+			stream := p.subscribedStreams[rand.Intn(len(p.subscribedStreams))]
 			parts := strings.Split(stream, "@")
 			switch parts[1] {
 			case "bookTicker":

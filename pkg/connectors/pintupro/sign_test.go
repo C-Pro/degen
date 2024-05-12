@@ -1,6 +1,11 @@
 package pintupro
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+)
 
 func TestParamsToString(t *testing.T) {
 	cases := []struct {
@@ -82,6 +87,58 @@ func TestParamsToString(t *testing.T) {
 			got := paramsToString(tt.params)
 			if got != tt.want {
 				t.Errorf("paramsToString() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWrapAndSign(t *testing.T) {
+	cases := []struct {
+		name      string
+		method    string
+		key       string
+		secret    string
+		requestID string
+		params    any
+		ts        time.Time
+		expected  Envelope
+	}{
+		{
+			name:      "simple",
+			method:    "private/whatever",
+			key:       "key",
+			secret:    "secret",
+			requestID: "req",
+			params: struct {
+				Price string `json:"price"`
+				Size  string `json:"size"`
+			}{
+				Price: "100",
+				Size:  "10",
+			},
+			ts: time.Unix(1715512719, 0),
+			expected: Envelope{
+				RequestID: "req",
+				Timestamp: 1715512719000,
+				Method:    "private/whatever",
+				Params: struct {
+					Price string `json:"price"`
+					Size  string `json:"size"`
+				}{
+					Price: "100",
+					Size:  "10",
+				},
+				Signature: "dfccf903072ab73d5092bdfb86155f22f85d68e58b73aa6c4c9556edf7e9c901",
+				APIKey:    "key",
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WrapAndSign(tt.method, tt.key, tt.secret, tt.requestID, tt.params, tt.ts)
+			if diff := cmp.Diff(got, &tt.expected); diff != "" {
+				t.Errorf("WrapAndSign() mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}

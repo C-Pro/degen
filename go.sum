@@ -1,5 +1,7 @@
 github.com/c-pro/geche v1.2.0 h1:u2xeqCLHd2QOsY7TnK7eE0iZ90fpuPeShrev+TdmipA=
 github.com/c-pro/geche v1.2.0/go.mod h1:ZgL4L6MQ0YGGC0wAgePwxKHakl7MoIX4SgVnP9jQ6mQ=
+github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
+github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/gorilla/websocket v1.4.1 h1:q7AeDBpnBk8AogcD4DSag/Ukw/KV+YhzLj2bP5HvKCM=

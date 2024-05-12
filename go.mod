@@ -11,4 +11,7 @@ require (
 	github.com/shopspring/decimal v1.3.1
 )
 
-require github.com/josharian/intern v1.0.0 // indirect
+require (
+	github.com/google/go-cmp v0.6.0 // indirect
+	github.com/josharian/intern v1.0.0 // indirect
+)
