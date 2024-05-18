@@ -128,6 +128,8 @@ func (bts *Binance) wsReconnectLoop(
 		case <-ctx.Done():
 			return
 		case reason := <-bts.reconnectCh:
+			// If last connection was established less than 10 seconds ago, ignore reconnect request.
+			// To avoid reconnect loop that can lead to IP ban.
 			if time.Since(connectedAt) < time.Second*10 {
 				goto ignore
 			}
