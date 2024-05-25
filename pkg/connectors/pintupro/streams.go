@@ -732,6 +732,7 @@ import (
 	"degen/pkg/models"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
@@ -873,6 +874,7 @@ type wsMessage struct {
 	RequestID string `json:"request_id"`
 	Timestamp int64  `json:"timestamp"`
 	Method    string `json:"method"`
+	Channel   string `json:"channel"`
 	Code      int    `json:"code"`
 	Message   string `json:"message"`
 	Reason    string `json:"reason"`
@@ -881,18 +883,41 @@ type wsMessage struct {
 
 func (p *PintuPro) registerWSHandlers() {
 	p.wsHandlers = map[string]wsHandlerFunc{
-		"heartbeat-request": p.handleHeartbeat,
-		"subscription":      p.handleSubscription,
-		// "aggTrade":           p.handleAggTrade,
-		// "bookTicker":         p.handleBookTicker,
-		// "depthUpdate":        p.handleDepthUpdate,
-		// "trade":              p.handleTrade,
+		"heartbeat-request":  p.handleHeartbeat,
+		"subscription":       p.handleSubscription,
+		"trades.":            p.handlePublicTrades,
+		"aggrbook.snapshot.": p.handleOrderBook,
 		// "user.balance":       p.handleUserBalance,
 		// "user.orders":        p.handleUserOrders,
 		// "user.orders.snapshot": p.handleUserOrdersSnapshot,
 		// "user.trades":        p.handleUserTrades,
 		// "user.trades.snapshot": p.handleUserTradesSnapshot,
 	}
+}
+
+func (p *PintuPro) getWsHandler(method, channel string) (wsHandlerFunc, error) {
+	handler, ok := p.wsHandlers[method]
+	if ok {
+		return handler, nil
+	}
+
+	handler, ok = p.wsHandlers[channel]
+	if ok {
+		return handler, nil
+	}
+
+	for k, h := range p.wsHandlers {
+		if strings.HasPrefix(channel, k) {
+			return h, nil
+		}
+	}
+
+	err := fmt.Errorf("unsupported method: %s", method)
+	if channel != "" {
+		err = fmt.Errorf("unsupported channel: %s", channel)
+	}
+
+	return nil, err
 }
 
 func (p *PintuPro) handleHeartbeat(msg wsMessage, _ chan<- models.ExchangeMessage) error {
@@ -917,6 +942,101 @@ func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMes
 	}
 	log.Printf("subscribed to %s", sub.Channel)
 	p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
+
+	return nil
+}
+
+// easyjson:json
+type tradesMsg struct {
+	Trades []struct {
+		Side      string `json:"side"`
+		Price     string `json:"price"`
+		Size      string `json:"size"`
+		Timestamp int64  `json:"timestamp"`
+		Symbol    string `json:"symbol"`
+	} `json:"trades"`
+}
+
+func tsToTime(ts int64) time.Time {
+	return time.Unix(0, ts*int64(time.Millisecond))
+}
+
+func (p *PintuPro) handlePublicTrades(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	var trades tradesMsg
+	if err := json.Unmarshal(msg.Data, &trades); err != nil {
+		return fmt.Errorf("failed to unmarshal message: %w", err)
+	}
+
+	for _, trade := range trades.Trades {
+		side := models.OrderSideBuy
+		if trade.Side == "SELL" {
+			side = models.OrderSideSell
+		}
+
+		price, err := decimal.NewFromString(trade.Price)
+		if err != nil {
+			return fmt.Errorf("failed to parse price: %w", err)
+		}
+
+		size, err := decimal.NewFromString(trade.Size)
+		if err != nil {
+			return fmt.Errorf("failed to parse size: %w", err)
+		}
+
+		ch <- models.ExchangeMessage{
+			Exchange:  Name,
+			Symbol:    trade.Symbol,
+			Timestamp: tsToTime(trade.Timestamp),
+			MsgType:   models.MsgTypeTrade,
+			Payload: models.Trade{
+				Side:      side,
+				Timestamp: tsToTime(trade.Timestamp),
+				Price:     price,
+				Size:      size,
+			},
+		}
+	}
+
+	return nil
+}
+
+// easyjson:json
+type orderBookMsg struct {
+	Symbol string     `json:"symbol"`
+	Bids   [][]string `json:"bids"`
+	Asks   [][]string `json:"asks"`
+}
+
+func (p *PintuPro) handleOrderBook(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	var ob orderBookMsg
+	if err := json.Unmarshal(msg.Data, &ob); err != nil {
+		return fmt.Errorf("failed to unmarshal orderbook: %w", err)
+	}
+
+	// For now I don't care much about depth, so I will just take the first level.
+	bbo := models.BBO{
+		Timestamp: tsToTime(msg.Timestamp),
+		Bid:       models.PriceLevel{},
+		Ask:       models.PriceLevel{},
+	}
+
+	if len(ob.Bids) > 0 {
+		bbo.Bid.Price, _ = decimal.NewFromString(ob.Bids[0][0])
+		bbo.Bid.Size, _ = decimal.NewFromString(ob.Bids[0][1])
+	}
+
+	if len(ob.Asks) > 0 {
+		bbo.Ask.Price, _ = decimal.NewFromString(ob.Asks[0][0])
+		bbo.Ask.Size, _ = decimal.NewFromString(ob.Asks[0][1])
+	}
+
+	ch <- models.ExchangeMessage{
+		Exchange:  Name,
+		Symbol:    ob.Symbol,
+		Timestamp: tsToTime(msg.Timestamp),
+		MsgType:   models.MsgTypeBBO,
+		Payload:   bbo,
+	}
 
 	return nil
 }
@@ -978,13 +1098,13 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 				goto loop
 			}
 
-			handler, ok := p.wsHandlers[r.Method]
-			if !ok {
-				log.Printf("unsupported method: %s", r.Method)
+			handler, err := p.getWsHandler(r.Method, r.Channel)
+			if err != nil {
+				log.Println(err)
 				goto loop
 			}
 
-			if err := handler(msg, ch); err != nil {
+			if err := handler(r, ch); err != nil {
 				log.Printf("handler error: %v", err)
 				errCnt++
 				goto loop
