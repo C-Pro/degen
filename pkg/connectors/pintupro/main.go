@@ -12,14 +12,14 @@ import (
 const Name = "pintupro"
 
 type PintuPro struct {
-	API                  *API
-	ws                   *connectors.WS
-	subscribedStreams    []string
-	subscriptionRequests map[string]string
-	wsHandlers           map[string]wsHandlerFunc
-	lastReceived         int64
-	idleTimeout          time.Duration
-	key, secret          string
+	API               *API
+	ws                *connectors.WS
+	subscribedStreams []string
+	// subscriptionRequests map[string]string
+	wsHandlers   map[string]wsHandlerFunc
+	lastReceived int64
+	idleTimeout  time.Duration
+	key, secret  string
 
 	reconnectCh chan any
 
