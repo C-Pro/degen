@@ -856,19 +856,6 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 	return nil
 }
 
-// Successful Subscription
-// {
-//   "request_id": "a88b9054-bde2-4fd7-8a4e-c6ff6de212e2",
-//   "timestamp": 1676869976772,
-//   "method": "subscribe", // subscribe/unsubscribe
-//   "code": 0,
-//   "message": "SUCCESS",
-//   "data": {
-//     "channel": "trades.BTC-IDR",
-//     // specific data goes here
-//   }
-// }
-
 //easyjson:json
 type wsMessage struct {
 	RequestID string `json:"request_id"`
