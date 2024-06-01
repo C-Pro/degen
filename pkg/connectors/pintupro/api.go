@@ -182,3 +182,49 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 
 	return &result, nil
 }
+
+// easyjson:json
+type symbolsReferenceResponse struct {
+	Symbols []struct {
+		Symbol           string          `json:"symbol"`
+		QuoteAsset       string          `json:"quote_asset"`
+		BaseAsset        string          `json:"base_asset"`
+		MaxSize          decimal.Decimal `json:"max_size"`
+		MinSize          decimal.Decimal `json:"min_size"`
+		PriceTickSize    decimal.Decimal `json:"price_tick_size"`
+		QuantityTickSize decimal.Decimal `json:"quantity_tick_size"`
+	} `json:"symbols"`
+}
+
+func (api *API) GetSymbols(_ context.Context) (map[string]models.SymbolInfo, error) {
+	var data symbolsReferenceResponse
+	resp := responseMessage{
+		Data: &data,
+	}
+	if err := api.call("public/get-symbols-reference", nil, &resp); err != nil {
+		return nil, fmt.Errorf("pintupro.GetSymbols: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return nil,
+			fmt.Errorf("pintupro.GetSymbols: unexpected code %d %s %s",
+				resp.Code, resp.Message, resp.Reason,
+			)
+	}
+
+	result := make(map[string]models.SymbolInfo, len(data.Symbols))
+
+	for _, s := range data.Symbols {
+		result[s.Symbol] = models.SymbolInfo{
+			Symbol:           s.Symbol,
+			Base:             s.BaseAsset,
+			Quote:            s.QuoteAsset,
+			PriceTickSize:    s.PriceTickSize,
+			QuantityTickSize: s.QuantityTickSize,
+			MinQuantity:      s.MinSize,
+			MaxQuantity:      s.MaxSize,
+		}
+	}
+
+	return result, nil
+}
