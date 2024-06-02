@@ -54,14 +54,15 @@ type Order struct {
 	Type            OrderType
 	TimeInForce     TimeInForce
 	Status          OrderStatus
+	PostOnly        bool
 	// Final flag is true when order is in its final state.
 	// E.g. filled, rejected, canceled.
 	Final bool
 
-	Size  decimal.Decimal
-	Price decimal.Decimal
+	Size         decimal.Decimal
+	NotionalSize decimal.Decimal
+	Price        decimal.Decimal
 
 	FilledSize   decimal.Decimal
 	AveragePrice decimal.Decimal
 }
-

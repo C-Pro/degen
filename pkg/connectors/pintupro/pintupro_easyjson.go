@@ -683,7 +683,208 @@ func (v *responseMessage) UnmarshalJSON(data []byte) error {
 func (v *responseMessage) UnmarshalEasyJSON(l *jlexer.Lexer) {
 	easyjson8536833dDecodeDegenPkgConnectorsPintupro3(l, v)
 }
-func easyjson8536833dDecodeDegenPkgConnectorsPintupro4(in *jlexer.Lexer, out *orderBookMsg) {
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro4(in *jlexer.Lexer, out *placeOrderResponse) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "order_id":
+			out.OrderID = string(in.String())
+		case "client_order_id":
+			out.ClientOrderID = string(in.String())
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro4(out *jwriter.Writer, in placeOrderResponse) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"order_id\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.OrderID))
+	}
+	{
+		const prefix string = ",\"client_order_id\":"
+		out.RawString(prefix)
+		out.String(string(in.ClientOrderID))
+	}
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v placeOrderResponse) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro4(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v placeOrderResponse) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro4(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *placeOrderResponse) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro4(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *placeOrderResponse) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro4(l, v)
+}
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro5(in *jlexer.Lexer, out *placeOrderRequest) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "symbol":
+			out.Symbol = string(in.String())
+		case "side":
+			out.Side = string(in.String())
+		case "type":
+			out.Type = string(in.String())
+		case "price":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.Price).UnmarshalJSON(data))
+			}
+		case "size":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.Size).UnmarshalJSON(data))
+			}
+		case "notional":
+			if data := in.Raw(); in.Ok() {
+				in.AddError((out.Notional).UnmarshalJSON(data))
+			}
+		case "client_order_id":
+			out.ClientOrderID = string(in.String())
+		case "time_in_force":
+			out.TimeInForce = string(in.String())
+		case "exec_inst":
+			out.ExecInst = string(in.String())
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro5(out *jwriter.Writer, in placeOrderRequest) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"symbol\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Symbol))
+	}
+	{
+		const prefix string = ",\"side\":"
+		out.RawString(prefix)
+		out.String(string(in.Side))
+	}
+	{
+		const prefix string = ",\"type\":"
+		out.RawString(prefix)
+		out.String(string(in.Type))
+	}
+	{
+		const prefix string = ",\"price\":"
+		out.RawString(prefix)
+		out.Raw((in.Price).MarshalJSON())
+	}
+	{
+		const prefix string = ",\"size\":"
+		out.RawString(prefix)
+		out.Raw((in.Size).MarshalJSON())
+	}
+	{
+		const prefix string = ",\"notional\":"
+		out.RawString(prefix)
+		out.Raw((in.Notional).MarshalJSON())
+	}
+	{
+		const prefix string = ",\"client_order_id\":"
+		out.RawString(prefix)
+		out.String(string(in.ClientOrderID))
+	}
+	{
+		const prefix string = ",\"time_in_force\":"
+		out.RawString(prefix)
+		out.String(string(in.TimeInForce))
+	}
+	{
+		const prefix string = ",\"exec_inst\":"
+		out.RawString(prefix)
+		out.String(string(in.ExecInst))
+	}
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v placeOrderRequest) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro5(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v placeOrderRequest) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro5(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *placeOrderRequest) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro5(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *placeOrderRequest) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro5(l, v)
+}
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro6(in *jlexer.Lexer, out *orderBookMsg) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -802,7 +1003,7 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro4(in *jlexer.Lexer, out *or
 		in.Consumed()
 	}
 }
-func easyjson8536833dEncodeDegenPkgConnectorsPintupro4(out *jwriter.Writer, in orderBookMsg) {
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro6(out *jwriter.Writer, in orderBookMsg) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -871,27 +1072,100 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro4(out *jwriter.Writer, in o
 // MarshalJSON supports json.Marshaler interface
 func (v orderBookMsg) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro4(&w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro6(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v orderBookMsg) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro4(w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro6(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *orderBookMsg) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro4(&r, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro6(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *orderBookMsg) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro4(l, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro6(l, v)
 }
-func easyjson8536833dDecodeDegenPkgConnectorsPintupro5(in *jlexer.Lexer, out *assetBalanceResponse) {
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro7(in *jlexer.Lexer, out *cancelOrderRequest) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "symbol":
+			out.Symbol = string(in.String())
+		case "order_id":
+			out.OrderID = string(in.String())
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro7(out *jwriter.Writer, in cancelOrderRequest) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"symbol\":"
+		out.RawString(prefix[1:])
+		out.String(string(in.Symbol))
+	}
+	{
+		const prefix string = ",\"order_id\":"
+		out.RawString(prefix)
+		out.String(string(in.OrderID))
+	}
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v cancelOrderRequest) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro7(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v cancelOrderRequest) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro7(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *cancelOrderRequest) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro7(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *cancelOrderRequest) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro7(l, v)
+}
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro8(in *jlexer.Lexer, out *assetBalanceResponse) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -926,7 +1200,7 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro5(in *jlexer.Lexer, out *as
 		in.Consumed()
 	}
 }
-func easyjson8536833dEncodeDegenPkgConnectorsPintupro5(out *jwriter.Writer, in assetBalanceResponse) {
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro8(out *jwriter.Writer, in assetBalanceResponse) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -951,27 +1225,27 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro5(out *jwriter.Writer, in a
 // MarshalJSON supports json.Marshaler interface
 func (v assetBalanceResponse) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro5(&w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro8(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v assetBalanceResponse) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro5(w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro8(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *assetBalanceResponse) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro5(&r, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro8(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *assetBalanceResponse) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro5(l, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro8(l, v)
 }
-func easyjson8536833dDecodeDegenPkgConnectorsPintupro6(in *jlexer.Lexer, out *accountInfoResponse) {
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro9(in *jlexer.Lexer, out *accountInfoResponse) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -1016,7 +1290,7 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro6(in *jlexer.Lexer, out *ac
 		in.Consumed()
 	}
 }
-func easyjson8536833dEncodeDegenPkgConnectorsPintupro6(out *jwriter.Writer, in accountInfoResponse) {
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro9(out *jwriter.Writer, in accountInfoResponse) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -1047,27 +1321,27 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro6(out *jwriter.Writer, in a
 // MarshalJSON supports json.Marshaler interface
 func (v accountInfoResponse) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro6(&w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro9(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v accountInfoResponse) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro6(w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro9(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *accountInfoResponse) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro6(&r, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro9(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *accountInfoResponse) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro6(l, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro9(l, v)
 }
-func easyjson8536833dDecodeDegenPkgConnectorsPintupro7(in *jlexer.Lexer, out *Envelope) {
+func easyjson8536833dDecodeDegenPkgConnectorsPintupro10(in *jlexer.Lexer, out *Envelope) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -1114,7 +1388,7 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro7(in *jlexer.Lexer, out *En
 		in.Consumed()
 	}
 }
-func easyjson8536833dEncodeDegenPkgConnectorsPintupro7(out *jwriter.Writer, in Envelope) {
+func easyjson8536833dEncodeDegenPkgConnectorsPintupro10(out *jwriter.Writer, in Envelope) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -1160,23 +1434,23 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro7(out *jwriter.Writer, in E
 // MarshalJSON supports json.Marshaler interface
 func (v Envelope) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro7(&w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro10(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v Envelope) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjson8536833dEncodeDegenPkgConnectorsPintupro7(w, v)
+	easyjson8536833dEncodeDegenPkgConnectorsPintupro10(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *Envelope) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro7(&r, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro10(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *Envelope) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjson8536833dDecodeDegenPkgConnectorsPintupro7(l, v)
+	easyjson8536833dDecodeDegenPkgConnectorsPintupro10(l, v)
 }
