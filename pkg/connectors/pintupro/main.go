@@ -12,7 +12,7 @@ import (
 const Name = "pintupro"
 
 type PintuPro struct {
-	API               *API
+	API
 	ws                *connectors.WS
 	subscribedStreams []string
 	// subscriptionRequests map[string]string
@@ -33,7 +33,7 @@ func NewPintuPro(
 	key, secret, apiBaseURL, wsBaseURL string,
 ) *PintuPro {
 	p := &PintuPro{
-		API:         NewAPI(key, secret, apiBaseURL),
+		API:         *NewAPI(key, secret, apiBaseURL),
 		ws:          &connectors.WS{},
 		reconnectCh: make(chan any),
 		wsHandlers:  make(map[string]wsHandlerFunc),

@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type exchange interface {
+	GetSymbols(ctx context.Context) (map[string]SymbolInfo, error)
 	GetAccountInfo(ctx context.Context) (*AccountInfo, error)
 	PlaceOrder(ctx context.Context, order Order) (*Order, error)
 	CancelOrder(ctx context.Context, order Order) (*Order, error)
@@ -26,11 +28,11 @@ type AccountInfo struct {
 }
 
 type Account struct {
+	exchange
 	id        string
-	api       exchange
 	balances  map[string]Balance
 	positions map[string]Position
-	orders    geche.Geche[string, Order]
+	orders    *geche.KV[Order]
 	stopWg    sync.WaitGroup
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -41,7 +43,7 @@ type Account struct {
 func NewAccount(id string, api exchange) *Account {
 	return &Account{
 		id:        id,
-		api:       api,
+		exchange:  api,
 		balances:  make(map[string]Balance),
 		positions: make(map[string]Position),
 		orders:    geche.NewKV[Order](geche.NewMapCache[string, Order]()),
@@ -49,7 +51,7 @@ func NewAccount(id string, api exchange) *Account {
 }
 
 func (a *Account) Start(ctx context.Context) error {
-	info, err := a.api.GetAccountInfo(ctx)
+	info, err := a.GetAccountInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get initial account info: %w", err)
 	}
@@ -61,7 +63,7 @@ func (a *Account) Start(ctx context.Context) error {
 	a.stopWg.Add(2)
 	ch := make(chan ExchangeMessage, 100)
 	go func() {
-		a.api.Listen(a.ctx, ch)
+		a.Listen(a.ctx, ch)
 		a.stopWg.Done()
 	}()
 
@@ -74,10 +76,10 @@ func (a *Account) Start(ctx context.Context) error {
 }
 
 func (a *Account) SubscribeSymbols(symbols []string) error {
-	if err := a.api.SubscribeBookAggTrades(a.ctx, symbols); err != nil {
+	if err := a.SubscribeBookAggTrades(a.ctx, symbols); err != nil {
 		return fmt.Errorf("failed to subscribe %v", err)
 	}
-	if err := a.api.SubscribeBookTickers(a.ctx, symbols); err != nil {
+	if err := a.SubscribeBookTickers(a.ctx, symbols); err != nil {
 		return fmt.Errorf("failed to subscribe %v", err)
 	}
 	return nil
@@ -151,6 +153,11 @@ func orderKey(order Order) string {
 
 func (a *Account) UpdateOrder(order Order) {
 	key := orderKey(order)
+	existing, err := a.orders.Get(key)
+	if err == nil && existing.Status == OrderStatusNew {
+		log.Printf("Order time to book: %s\n", order.CreatedAt.Sub(existing.PlacedAt))
+		log.Printf("Order e2e time: %s\n", order.UpdatedAt.Sub(existing.PlacedAt))
+	}
 	if order.Final {
 		// nolint:errcheck
 		a.orders.Del(key)
@@ -200,9 +207,27 @@ func (a *Account) Update(upd ExchangeMessage) error {
 }
 
 func (a *Account) PlaceOrder(ctx context.Context, order Order) (*Order, error) {
-	return a.api.PlaceOrder(ctx, order)
+	order.PlacedAt = time.Now().UTC()
+	o, err := a.PlaceOrder(ctx, order)
+	if err != nil {
+		return nil, err
+	}
+
+	a.UpdateOrder(*o)
+	return o, nil
 }
 
 func (a *Account) CancelOrder(ctx context.Context, order Order) (*Order, error) {
-	return a.api.CancelOrder(ctx, order)
+	return a.CancelOrder(ctx, order)
+}
+
+func (a *Account) GetOrder(symbol, clientOrderID string) *Order {
+	key := fmt.Sprintf("%s:%s", symbol, clientOrderID)
+	o, _ := a.orders.Get(key)
+	return &o
+}
+
+func (a *Account) GetOrders(symbol string) []Order {
+	orders, _ := a.orders.ListByPrefix(symbol + ":")
+	return orders
 }

@@ -5,21 +5,22 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"degen/pkg/connectors/binance"
+	"degen/pkg/connectors/pintupro"
 	"degen/pkg/models"
 	"degen/pkg/strategies"
 
 	"github.com/shopspring/decimal"
 )
 
-const (
-	theSymbol = "ethusdt"
-	theAsset  = "usdt"
+var (
+	theSymbol = "ETH-IDR"
+	theAsset  = "IDR"
+	orderSize = decimal.NewFromFloat(0.01)
+	spread    = decimal.NewFromFloat(0.01)
 )
 
 func main() {
@@ -34,67 +35,34 @@ func main() {
 		close(ch)
 	}()
 
-	bnc := binance.NewBinance(
+	ptu := pintupro.NewPintuPro(
 		ctx,
-		os.Getenv("BINANCE_KEY"),
-		os.Getenv("BINANCE_SECRET"),
-		"https://testnet.binancefuture.com",
-		"wss://stream.binancefuture.com",
+		os.Getenv("PINTUPRO_KEY"),
+		os.Getenv("PINTUPRO_SECRET"),
+		"https://api.pintu.pro",
+		"wss://stream.pintu.pro",
 	)
 
-	if bnc == nil {
+	if ptu == nil {
 		return
 	}
 
-	go bnc.Listen(ctx, ch)
+	go ptu.Listen(ctx, ch)
 
-	if err := bnc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
+	if err := ptu.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
 		log.Printf("failed to subscribe: %v\n", err)
 		return
 	}
 
-	acc := models.NewAccount("binance", bnc)
+	acc := models.NewAccount("pintu", ptu)
 
-	monkey := strategies.NewMonkey(ctx, acc)
-	go func() {
-		for {
-			select {
-			case side := <-monkey.Say():
-				log.Printf("MONKEY WANNA %s!\n", strings.ToUpper(string(side)))
-				order := models.Order{
-					CreatedAt: time.Now().UTC(),
-					Symbol:    theSymbol,
-					Size:      decimal.NewFromFloat(0.25),
-					Side:      side,
-					Type:      models.OrderTypeMarket,
-				}
-				res, err := bnc.API.PlaceOrder(ctx, order)
-				if err != nil {
-					log.Printf("monkey has failed to place an order: %v", err)
-					continue
-				}
-
-				if res.Type == models.OrderTypeMarket {
-					log.Printf("monkey has placed a %s order to %s %v %s\n",
-						res.Type,
-						res.Side,
-						res.Size,
-						res.Symbol,
-					)
-				} else {
-					log.Printf("monkey has placed a %s order to %s %v %s at %v\n",
-						res.Type,
-						res.Side,
-						res.Size,
-						res.Symbol,
-						res.Price,
-					)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	monkey := strategies.NewMonkey(
+		ctx,
+		acc,
+		theSymbol,
+		orderSize,
+		spread,
+	)
 
 	go func() {
 		var lastChange time.Time
@@ -125,7 +93,7 @@ func main() {
 			continue
 		case models.MsgTypeBalanceUpdate:
 			upd := msg.Payload.(models.BalanceUpdate)
-			// log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
+			log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
 			acc.UpdateBalance(upd.Asset, upd.Balance, decimal.Zero, msg.Timestamp)
 			once.Do(func() {
 				initialBalance = upd.Balance

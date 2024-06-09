@@ -3,126 +3,137 @@ package strategies
 import (
 	"context"
 	"log"
-	"sync/atomic"
-	"time"
 
 	"degen/pkg/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-const (
-	patience = 1
-	symbol   = "ethusdt"
-	slippage = 0.005
-)
-
+// Monkey is a simplest market maker that follows
+// the current midprice and places orders with definded spread.
 type Monkey struct {
-	ch               chan models.OrderSide
-	cntUp, cntDown   int
+	orderSize        decimal.Decimal
+	symbol           models.SymbolInfo
 	prevBid, prevAsk models.PriceLevel
-	numEvents        uint32
 	acc              *models.Account
+	pnl              decimal.Decimal
+	spread           decimal.Decimal
 }
 
 func NewMonkey(
 	ctx context.Context,
 	acc *models.Account,
+	symbol string,
+	orderSize decimal.Decimal,
+	spread decimal.Decimal,
 ) *Monkey {
-	m := &Monkey{
-		ch:  make(chan models.OrderSide),
-		acc: acc,
+	symbols, err := acc.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return nil
+	}
+	s, ok := symbols[symbol]
+	if !ok {
+		log.Printf("symbol %s not found\n", symbol)
+		return nil
 	}
 
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				atomic.StoreUint32(&m.numEvents, 0)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	m := &Monkey{
+		acc:       acc,
+		symbol:    s,
+		orderSize: orderSize,
+	}
 
 	return m
 }
 
+var two = decimal.NewFromInt(2)
+
+func roundUp(v, tick decimal.Decimal) decimal.Decimal {
+	return v.Div(tick).Ceil().Mul(tick)
+}
+
+func roundDown(v, tick decimal.Decimal) decimal.Decimal {
+	return v.Div(tick).Floor().Mul(tick)
+}
+
 func (m *Monkey) See(e models.ExchangeMessage) {
-	pos := m.acc.GetPosition(symbol)
+	if e.Symbol != m.symbol.Symbol {
+		return
+	}
+
+	orders := m.acc.GetOrders(m.symbol.Symbol)
+	if len(orders) != 0 && len(orders) != 2 {
+		log.Printf("unexpected number of orders: %d\n", len(orders))
+		return
+	}
+
+	var bid, ask *models.Order
+	for _, o := range orders {
+		if o.Side == models.OrderSideBuy {
+			bid = &o
+		} else {
+			ask = &o
+		}
+	}
+
 	switch e.MsgType {
 	case models.MsgTypeBBO:
 		bbo := e.Payload.(models.BBO)
-		if !m.prevAsk.Price.IsZero() {
-			if m.prevAsk.Price.GreaterThan(bbo.Ask.Price) {
-				m.cntUp++
-				log.Printf("^^^ %d\n", m.cntUp)
+		if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
+			log.Println("bbo contains zeros")
+			return
+		}
+		midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(two)
+		desiredBid := roundDown(midprice.Sub(m.spread.Div(two)), m.symbol.PriceTickSize)
+		desiredAsk := roundUp(midprice.Add(m.spread.Div(two)), m.symbol.PriceTickSize)
 
-				// Closing short position if expected PnL > profitMargin.
-				profitMargin := bbo.Ask.Price.Mul(decimal.NewFromFloat(slippage))
-				if pos.Amount.IsNegative() &&
-					pos.EntryPrice.GreaterThan(bbo.Ask.Price.Add(profitMargin)) {
-					m.ch <- models.OrderSideBuy
-					m.prevAsk = bbo.Ask
-					return
-				}
-				if pos.Amount.IsPositive() {
-					// We are already in position.
-					m.prevAsk = bbo.Ask
-					return
-				}
-
-				if m.cntUp > patience {
-					// Opening long position if price is going up.
-					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideBuy
-					}
-					m.cntUp = 0
-				}
-			} else if m.prevAsk.Price.LessThan(bbo.Ask.Price) {
-				m.cntUp = 0
+		// TODO: Makes sense to use batch commands.
+		// toCancel := make([]models.Order, 0, 2)
+		// toPlace := make([]models.Order, 0, 2)
+		if bid != nil && !bid.Price.Equal(desiredBid) {
+			_, err := m.acc.CancelOrder(context.Background(), *bid)
+			if err != nil {
+				log.Printf("failed to cancel bid: %v\n", err)
 			}
 		}
 
-		m.prevAsk = bbo.Ask
-
-		// Closing long position if expected PnL > profitMargin.
-		if !m.prevBid.Price.IsZero() {
-			if m.prevBid.Price.LessThan(bbo.Bid.Price) {
-				m.cntDown++
-				log.Printf("vvv %d\n", m.cntDown)
-
-				profitMargin := bbo.Bid.Price.Mul(decimal.NewFromFloat(slippage))
-				if pos.Amount.IsPositive() &&
-					pos.EntryPrice.LessThan(bbo.Bid.Price.Sub(profitMargin)) {
-					m.ch <- models.OrderSideSell
-					m.prevBid = bbo.Bid
-					return
-				}
-				if pos.Amount.IsNegative() {
-					// We are already in position.
-					m.prevBid = bbo.Bid
-					return
-				}
-
-				if m.cntDown > patience {
-					// Opening short position if price is going up.
-					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideSell
-					}
-					m.cntDown = 0
-				}
-			} else if m.prevBid.Price.GreaterThan(bbo.Bid.Price) {
-				m.cntDown = 0
+		if !(bid != nil && bid.Price.Equal(desiredBid)) {
+			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+				Symbol:        m.symbol.Symbol,
+				Side:          models.OrderSideBuy,
+				Type:          models.OrderTypeLimit,
+				PostOnly:      true,
+				Price:         desiredBid,
+				Size:          m.orderSize,
+				ClientOrderID: uuid.NewString(),
+			})
+			if err != nil {
+				log.Printf("failed to place bid: %v\n", err)
 			}
 		}
 
-		m.prevBid = bbo.Bid
+		if ask != nil && !ask.Price.Equal(desiredAsk) {
+			_, err := m.acc.CancelOrder(context.Background(), *ask)
+			if err != nil {
+				log.Printf("failed to cancel ask: %v\n", err)
+			}
+		}
+
+		if !(ask != nil && ask.Price.Equal(desiredAsk)) {
+			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+				Symbol:        m.symbol.Symbol,
+				Side:          models.OrderSideSell,
+				Type:          models.OrderTypeLimit,
+				PostOnly:      true,
+				Price:         desiredAsk,
+				Size:          m.orderSize,
+				ClientOrderID: uuid.NewString(),
+			})
+			if err != nil {
+				log.Printf("failed to place ask: %v\n", err)
+			}
+		}
 	}
-}
-
-func (m *Monkey) Say() <-chan models.OrderSide {
-	return m.ch
 }
