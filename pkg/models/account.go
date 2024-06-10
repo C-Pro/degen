@@ -208,7 +208,7 @@ func (a *Account) Update(upd ExchangeMessage) error {
 
 func (a *Account) PlaceOrder(ctx context.Context, order Order) (*Order, error) {
 	order.PlacedAt = time.Now().UTC()
-	o, err := a.PlaceOrder(ctx, order)
+	o, err := a.exchange.PlaceOrder(ctx, order)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (a *Account) PlaceOrder(ctx context.Context, order Order) (*Order, error) {
 }
 
 func (a *Account) CancelOrder(ctx context.Context, order Order) (*Order, error) {
-	return a.CancelOrder(ctx, order)
+	return a.exchange.CancelOrder(ctx, order)
 }
 
 func (a *Account) GetOrder(symbol, clientOrderID string) *Order {

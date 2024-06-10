@@ -15,9 +15,7 @@ import (
 type Monkey struct {
 	orderSize        decimal.Decimal
 	symbol           models.SymbolInfo
-	prevBid, prevAsk models.PriceLevel
 	acc              *models.Account
-	pnl              decimal.Decimal
 	spread           decimal.Decimal
 }
 
