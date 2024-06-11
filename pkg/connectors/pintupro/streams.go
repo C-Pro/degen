@@ -217,6 +217,9 @@ func (p *PintuPro) handleHeartbeat(msg wsMessage, _ chan<- models.ExchangeMessag
 }
 
 func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMessage) error {
+	if msg.Code != 0 {
+		return fmt.Errorf("subscription error: %s %s", msg.Message, msg.Reason)
+	}
 	var sub struct {
 		Channel string `json:"channel"`
 	}
