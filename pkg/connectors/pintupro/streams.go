@@ -120,6 +120,11 @@ func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) e
 	for i, s := range symbols {
 		streams[i] = "aggrbook.snapshot.1." + s
 	}
+
+	if err := p.subscribeStreams(ctx, streams); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
 	p.subscribedStreams = append(p.subscribedStreams, streams...)
 
 	return nil
@@ -135,6 +140,10 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 	streams := make([]string, len(symbols))
 	for i, s := range symbols {
 		streams[i] = "trades." + s
+	}
+
+	if err := p.subscribeStreams(ctx, streams); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
 	p.subscribedStreams = append(p.subscribedStreams, streams...)
