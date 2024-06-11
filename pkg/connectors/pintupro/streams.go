@@ -224,7 +224,7 @@ func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMes
 		Channel string `json:"channel"`
 	}
 	if err := json.Unmarshal(msg.Data, &sub); err != nil {
-		return fmt.Errorf("failed to unmarshal subscription: %w", err)
+		return fmt.Errorf("failed to unmarshal subscription: %w %s", err, msg.Data)
 	}
 	log.Printf("subscribed to %s", sub.Channel)
 	p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
