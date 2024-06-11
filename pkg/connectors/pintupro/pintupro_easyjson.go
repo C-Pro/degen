@@ -51,7 +51,7 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro(in *jlexer.Lexer, out *wsM
 			out.Message = string(in.String())
 		case "reason":
 			out.Reason = string(in.String())
-		case "Data":
+		case "data":
 			if data := in.Raw(); in.Ok() {
 				in.AddError((out.Data).UnmarshalJSON(data))
 			}
@@ -105,7 +105,7 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro(out *jwriter.Writer, in ws
 		out.String(string(in.Reason))
 	}
 	{
-		const prefix string = ",\"Data\":"
+		const prefix string = ",\"data\":"
 		out.RawString(prefix)
 		out.Raw((in.Data).MarshalJSON())
 	}

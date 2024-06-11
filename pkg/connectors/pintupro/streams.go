@@ -153,14 +153,14 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 
 //easyjson:json
 type wsMessage struct {
-	RequestID string `json:"request_id"`
-	Timestamp int64  `json:"timestamp"`
-	Method    string `json:"method"`
-	Channel   string `json:"channel"`
-	Code      int    `json:"code"`
-	Message   string `json:"message"`
-	Reason    string `json:"reason"`
-	Data      json.RawMessage
+	RequestID string          `json:"request_id"`
+	Timestamp int64           `json:"timestamp"`
+	Method    string          `json:"method"`
+	Channel   string          `json:"channel"`
+	Code      int             `json:"code"`
+	Message   string          `json:"message"`
+	Reason    string          `json:"reason"`
+	Data      json.RawMessage `json:"data"`
 }
 
 func (p *PintuPro) registerWSHandlers() {
