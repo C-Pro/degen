@@ -381,6 +381,8 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 				goto loop
 			}
 		case msg := <-rawCh:
+			log.Print(string(msg))
+
 			var r wsMessage
 			if err := json.Unmarshal(msg, &r); err != nil {
 				log.Printf("failed to unmarshal msg: %v\n%v\n", err, string(msg))
