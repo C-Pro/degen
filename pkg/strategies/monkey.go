@@ -13,10 +13,10 @@ import (
 // Monkey is a simplest market maker that follows
 // the current midprice and places orders with definded spread.
 type Monkey struct {
-	orderSize        decimal.Decimal
-	symbol           models.SymbolInfo
-	acc              *models.Account
-	spread           decimal.Decimal
+	orderSize decimal.Decimal
+	symbol    models.SymbolInfo
+	acc       *models.Account
+	spread    decimal.Decimal
 }
 
 func NewMonkey(
@@ -79,11 +79,16 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 	switch e.MsgType {
 	case models.MsgTypeBBO:
 		bbo := e.Payload.(models.BBO)
-		if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
-			log.Println("bbo contains zeros")
+		if bbo.Bid.Price.IsZero() && bbo.Ask.Price.IsZero() {
+			log.Println("no BBO")
 			return
 		}
+
 		midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(two)
+		if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
+			midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
+		}
+
 		desiredBid := roundDown(midprice.Sub(m.spread.Div(two)), m.symbol.PriceTickSize)
 		desiredAsk := roundUp(midprice.Add(m.spread.Div(two)), m.symbol.PriceTickSize)
 
