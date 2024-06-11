@@ -166,7 +166,7 @@ type wsMessage struct {
 func (p *PintuPro) registerWSHandlers() {
 	p.wsHandlers = map[string]wsHandlerFunc{
 		"heartbeat-request":  p.handleHeartbeat,
-		"subscription":       p.handleSubscription,
+		"subscribe":          p.handleSubscription,
 		"trades.":            p.handlePublicTrades,
 		"aggrbook.snapshot.": p.handleOrderBook,
 		"public/auth":        p.handleAuth,
