@@ -121,10 +121,7 @@ func (api *API) callPublic(
 	paramsAny any,
 	dest any,
 ) error {
-	params, ok := paramsAny.(url.Values)
-	if !ok {
-		return fmt.Errorf("pintupro.callPublic: invalid params type %T", paramsAny)
-	}
+	params, _ := paramsAny.(url.Values)
 
 	apiURL, err := url.JoinPath(api.baseURL, "v1", method)
 	if err != nil {

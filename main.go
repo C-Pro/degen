@@ -35,13 +35,17 @@ func main() {
 		close(ch)
 	}()
 
-	ptu := pintupro.NewPintuPro(
+	ptu, err := pintupro.NewPintuPro(
 		ctx,
 		os.Getenv("PINTUPRO_KEY"),
 		os.Getenv("PINTUPRO_SECRET"),
-		"https://api.pintu.pro",
-		"wss://stream.pintu.pro",
+		os.Getenv("PINTUPRO_API_BASE_URL"),
+		os.Getenv("PINTUPRO_WS_URL"),
 	)
+	if err != nil {
+		log.Printf("failed to init connector: %v\n", err)
+		return
+	}
 
 	if ptu == nil {
 		return
