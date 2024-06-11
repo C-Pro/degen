@@ -118,7 +118,7 @@ func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) e
 
 	streams := make([]string, len(symbols))
 	for i, s := range symbols {
-		streams[i] = " aggrbook.snapshot.1." + s
+		streams[i] = "aggrbook.snapshot.1." + s
 	}
 	p.subscribedStreams = append(p.subscribedStreams, streams...)
 
@@ -160,6 +160,7 @@ func (p *PintuPro) registerWSHandlers() {
 		"subscription":       p.handleSubscription,
 		"trades.":            p.handlePublicTrades,
 		"aggrbook.snapshot.": p.handleOrderBook,
+		"public/auth":        p.handleAuth,
 		// "user.balance":       p.handleUserBalance,
 		// "user.orders":        p.handleUserOrders,
 		// "user.orders.snapshot": p.handleUserOrdersSnapshot,
@@ -278,6 +279,15 @@ type orderBookMsg struct {
 	Symbol string     `json:"symbol"`
 	Bids   [][]string `json:"bids"`
 	Asks   [][]string `json:"asks"`
+}
+
+func (p *PintuPro) handleAuth(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	if msg.Code != 0 {
+		return fmt.Errorf("auth error: %s %s", msg.Message, msg.Reason)
+	}
+
+	log.Println("authenticated")
+	return nil
 }
 
 func (p *PintuPro) handleOrderBook(msg wsMessage, ch chan<- models.ExchangeMessage) error {
