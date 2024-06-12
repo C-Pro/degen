@@ -42,7 +42,7 @@ func TestParamsToString(t *testing.T) {
 			params: struct {
 				List1 []int    `json:"theList"`
 				List2 []string `json:"anotherOne"`
-				Empty []string
+				Empty []string `json:"empty,omitempty"`
 			}{
 				List1: []int{3, 4, 5},
 				List2: []string{"c", "b", "a"},

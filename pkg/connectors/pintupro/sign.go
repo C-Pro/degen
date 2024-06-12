@@ -51,10 +51,6 @@ func paramsToString(params any) string {
 		v = v.Elem()
 	}
 
-	if !v.IsValid() && !v.IsZero() {
-		return ""
-	}
-
 	var b strings.Builder
 	switch v.Kind() {
 	case reflect.Slice, reflect.Array:
@@ -108,22 +104,17 @@ func paramsToString(params any) string {
 		})
 		for _, fs := range fields {
 			f := v.Field(fs.i)
-			if !f.IsValid() {
-				continue
-			}
-
 			if f.Kind() == reflect.Ptr {
 				f = f.Elem()
 			}
 
-			val := paramsToString(f.Interface())
-			if val != "" {
-				b.WriteString(fs.n)
-				b.WriteString(val)
-			}
+			b.WriteString(fs.n)
+			b.WriteString(paramsToString(f.Interface()))
 		}
 	default:
-		b.WriteString(fmt.Sprintf("%v", v.Interface()))
+		if v.IsValid() {
+			b.WriteString(fmt.Sprintf("%v", v.Interface()))
+		}
 	}
 
 	return b.String()
