@@ -828,32 +828,32 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro5(out *jwriter.Writer, in p
 		out.RawString(prefix)
 		out.String(string(in.Type))
 	}
-	{
+	if true {
 		const prefix string = ",\"price\":"
 		out.RawString(prefix)
 		out.Raw((in.Price).MarshalJSON())
 	}
-	{
+	if true {
 		const prefix string = ",\"size\":"
 		out.RawString(prefix)
 		out.Raw((in.Size).MarshalJSON())
 	}
-	{
+	if true {
 		const prefix string = ",\"notional\":"
 		out.RawString(prefix)
 		out.Raw((in.Notional).MarshalJSON())
 	}
-	{
+	if in.ClientOrderID != "" {
 		const prefix string = ",\"client_order_id\":"
 		out.RawString(prefix)
 		out.String(string(in.ClientOrderID))
 	}
-	{
+	if in.TimeInForce != "" {
 		const prefix string = ",\"time_in_force\":"
 		out.RawString(prefix)
 		out.String(string(in.TimeInForce))
 	}
-	{
+	if in.ExecInst != "" {
 		const prefix string = ",\"exec_inst\":"
 		out.RawString(prefix)
 		out.String(string(in.ExecInst))

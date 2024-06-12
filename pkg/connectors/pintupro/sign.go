@@ -24,7 +24,6 @@ type Envelope struct {
 	APIKey    string `json:"api_key"`
 }
 
-
 // WrapAndSign wraps the request into an Envelope and signs it
 // according to the request signature computation rules:
 // https://docs.pintupro.com/#api-signature-computation
@@ -52,7 +51,7 @@ func paramsToString(params any) string {
 		v = v.Elem()
 	}
 
-	if !v.IsValid() {
+	if !v.IsValid() && !v.IsZero() {
 		return ""
 	}
 
