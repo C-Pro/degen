@@ -34,7 +34,9 @@ func main() {
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		http.ListenAndServe(":8080", nil)
+		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
+			log.Printf("HTTP server stopped with error: %v", err)
+		}
 	}()
 
 	ch := make(chan models.ExchangeMessage, 100)
