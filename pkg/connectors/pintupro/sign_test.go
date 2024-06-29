@@ -80,6 +80,25 @@ func TestParamsToString(t *testing.T) {
 			},
 			want: "obja1b2obj2CtestCbest",
 		},
+		{
+			name: "example from docs",
+			params: struct {
+				Price       string `json:"price"`
+				Side        string `json:"side"`
+				Size        string `json:"size"`
+				Symbol      string `json:"symbol"`
+				TimeInForce string `json:"time_in_force"`
+				OrderType   string `json:"type"`
+			}{
+				Price:       "1015979000",
+				Side:        "BUY",
+				Size:        "0.001",
+				Symbol:      "BTC-IDR",
+				TimeInForce: "GTC",
+				OrderType:   "LIMIT",
+			},
+			want: "price1015979000sideBUYsize0.001symbolBTC-IDRtime_in_forceGTCtypeLIMIT",
+		},
 	}
 
 	for _, tt := range cases {
@@ -130,6 +149,68 @@ func TestWrapAndSign(t *testing.T) {
 				},
 				Signature: "dfccf903072ab73d5092bdfb86155f22f85d68e58b73aa6c4c9556edf7e9c901",
 				APIKey:    "key",
+			},
+		},
+		{
+			name:      "example from docs (place-order)",
+			method:    "private/place-order",
+			key:       "abc0",
+			secret:    "abc",
+			requestID: "fc9f3e2e-6791-49ac-af23-715fccac13dd",
+			params: struct {
+				Price       string `json:"price"`
+				Side        string `json:"side"`
+				Size        string `json:"size"`
+				Symbol      string `json:"symbol"`
+				TimeInForce string `json:"time_in_force"`
+				OrderType   string `json:"type"`
+			}{
+				Price:       "1015979000",
+				Side:        "BUY",
+				Size:        "0.001",
+				Symbol:      "BTC-IDR",
+				TimeInForce: "GTC",
+				OrderType:   "LIMIT",
+			},
+			ts: time.Unix(0, 1719295943513*int64(time.Millisecond)),
+			expected: Envelope{
+				RequestID: "fc9f3e2e-6791-49ac-af23-715fccac13dd",
+				Timestamp: 1719295943513,
+				Method:    "private/place-order",
+				Params: struct {
+					Price       string `json:"price"`
+					Side        string `json:"side"`
+					Size        string `json:"size"`
+					Symbol      string `json:"symbol"`
+					TimeInForce string `json:"time_in_force"`
+					OrderType   string `json:"type"`
+				}{
+					Price:       "1015979000",
+					Side:        "BUY",
+					Size:        "0.001",
+					Symbol:      "BTC-IDR",
+					TimeInForce: "GTC",
+					OrderType:   "LIMIT",
+				},
+				Signature: "2094afd679b8a8afe1a74350aa5a3f05329309ce48ac9a4f05e28750be2c4ed4",
+				APIKey:    "abc0",
+			},
+		},
+		{
+			name:      "example from docs (ws auth)",
+			method:    "public/auth",
+			key:       "abc0",
+			secret:    "abc",
+			requestID: "837873eb-0d68-457b-860f-a853046455cf",
+			params:    nil,
+			ts:        time.Unix(0, 1719306245083*int64(time.Millisecond)),
+			expected: Envelope{
+				RequestID: "837873eb-0d68-457b-860f-a853046455cf",
+				Timestamp: 1719306245083,
+				Method:    "public/auth",
+				Params:    nil,
+				Signature: "6d13d543b959454eb6b05ac5d3722aad3d9cd7a887d5083fb1818d18e34cff36",
+				APIKey:    "abc0",
 			},
 		},
 	}

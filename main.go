@@ -3,16 +3,19 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"degen/pkg/account"
 	"degen/pkg/connectors/pintupro"
 	"degen/pkg/models"
 	"degen/pkg/strategies"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shopspring/decimal"
 )
 
@@ -28,6 +31,11 @@ func main() {
 	once := sync.Once{}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		http.ListenAndServe(":8080", nil)
+	}()
 
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -58,7 +66,7 @@ func main() {
 		return
 	}
 
-	acc := models.NewAccount("pintu", ptu)
+	acc := account.NewAccount("pintu", ptu)
 
 	monkey := strategies.NewMonkey(
 		ctx,

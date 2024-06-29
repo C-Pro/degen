@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"degen/pkg/account"
 	"degen/pkg/models"
 
 	"github.com/google/uuid"
@@ -11,17 +12,17 @@ import (
 )
 
 // Monkey is a simplest market maker that follows
-// the current midprice and places orders with definded spread.
+// the current midprice and places orders with defined spread.
 type Monkey struct {
 	orderSize decimal.Decimal
 	symbol    models.SymbolInfo
-	acc       *models.Account
+	acc       *account.Account
 	spread    decimal.Decimal
 }
 
 func NewMonkey(
 	ctx context.Context,
-	acc *models.Account,
+	acc *account.Account,
 	symbol string,
 	orderSize decimal.Decimal,
 	spread decimal.Decimal,
