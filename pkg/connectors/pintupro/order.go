@@ -14,12 +14,12 @@ type placeOrderRequest struct {
 	Symbol        string          `json:"symbol"`
 	Side          string          `json:"side"`
 	Type          string          `json:"type"`
-	Price         decimal.Decimal `json:"price"`
-	Size          decimal.Decimal `json:"size"`
-	Notional      decimal.Decimal `json:"notional"`
-	ClientOrderID string          `json:"client_order_id"`
-	TimeInForce   string          `json:"time_in_force"`
-	ExecInst      string          `json:"exec_inst"`
+	Price         decimal.Decimal `json:"price,omitempty"`
+	Size          decimal.Decimal `json:"size,omitempty"`
+	Notional      decimal.Decimal `json:"notional,omitempty"`
+	ClientOrderID string          `json:"client_order_id,omitempty"`
+	TimeInForce   string          `json:"time_in_force,omitempty"`
+	ExecInst      string          `json:"exec_inst,omitempty"`
 }
 
 // easyjson:json

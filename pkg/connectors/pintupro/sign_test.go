@@ -19,6 +19,13 @@ func TestParamsToString(t *testing.T) {
 			want:   "",
 		},
 		{
+			name: "emptyString",
+			params: struct {
+				S string `json:"s"`
+			}{S: ""},
+			want: "s",
+		},
+		{
 			name: "simple struct",
 			params: struct {
 				A int    `json:"batur"`
@@ -35,7 +42,7 @@ func TestParamsToString(t *testing.T) {
 			params: struct {
 				List1 []int    `json:"theList"`
 				List2 []string `json:"anotherOne"`
-				Empty []string
+				Empty []string `json:"empty,omitempty"`
 			}{
 				List1: []int{3, 4, 5},
 				List2: []string{"c", "b", "a"},
@@ -105,7 +112,7 @@ func TestParamsToString(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := paramsToString(tt.params)
 			if got != tt.want {
-				t.Errorf("paramsToString() = %s, want %s", got, tt.want)
+				t.Errorf("paramsToString() = %q, want %q", got, tt.want)
 			}
 		})
 	}

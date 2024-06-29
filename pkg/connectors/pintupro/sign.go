@@ -24,7 +24,6 @@ type Envelope struct {
 	APIKey    string `json:"api_key"`
 }
 
-
 // WrapAndSign wraps the request into an Envelope and signs it
 // according to the request signature computation rules:
 // https://docs.pintupro.com/#api-signature-computation
@@ -50,10 +49,6 @@ func paramsToString(params any) string {
 	v := reflect.ValueOf(params)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
-	}
-
-	if !v.IsValid() {
-		return ""
 	}
 
 	var b strings.Builder
@@ -109,22 +104,17 @@ func paramsToString(params any) string {
 		})
 		for _, fs := range fields {
 			f := v.Field(fs.i)
-			if !f.IsValid() {
-				continue
-			}
-
 			if f.Kind() == reflect.Ptr {
 				f = f.Elem()
 			}
 
-			val := paramsToString(f.Interface())
-			if val != "" {
-				b.WriteString(fs.n)
-				b.WriteString(val)
-			}
+			b.WriteString(fs.n)
+			b.WriteString(paramsToString(f.Interface()))
 		}
 	default:
-		b.WriteString(fmt.Sprintf("%v", v.Interface()))
+		if v.IsValid() {
+			b.WriteString(fmt.Sprintf("%v", v.Interface()))
+		}
 	}
 
 	return b.String()
