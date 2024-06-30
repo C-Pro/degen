@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	theSymbol = "ETH-IDR"
+	theSymbol = "SOL-IDR"
 	theAsset  = "IDR"
 	orderSize = decimal.NewFromFloat(0.01)
 	spread    = decimal.NewFromFloat(0.01)

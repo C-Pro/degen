@@ -3,23 +3,22 @@ package pintupro
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"degen/pkg/models"
-
-	"github.com/shopspring/decimal"
 )
 
 // easyjson:json
 type placeOrderRequest struct {
-	Symbol        string          `json:"symbol"`
-	Side          string          `json:"side"`
-	Type          string          `json:"type"`
-	Price         decimal.Decimal `json:"price,omitempty"`
-	Size          decimal.Decimal `json:"size,omitempty"`
-	Notional      decimal.Decimal `json:"notional,omitempty"`
-	ClientOrderID string          `json:"client_order_id,omitempty"`
-	TimeInForce   string          `json:"time_in_force,omitempty"`
-	ExecInst      string          `json:"exec_inst,omitempty"`
+	Symbol        string `json:"symbol"`
+	Side          string `json:"side"`
+	Type          string `json:"type"`
+	Price         string `json:"price,omitempty"`
+	Size          string `json:"size,omitempty"`
+	Notional      string `json:"notional,omitempty"`
+	ClientOrderID string `json:"client_order_id,omitempty"`
+	TimeInForce   string `json:"time_in_force,omitempty"`
+	ExecInst      string `json:"exec_inst,omitempty"`
 }
 
 // easyjson:json
@@ -29,15 +28,32 @@ type placeOrderResponse struct {
 }
 
 func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Order, error) {
+	if order.TimeInForce == "" {
+		order.TimeInForce = models.TimeInForceGTC
+	}
+	price := ""
+	if order.Price.IsPositive() {
+		price = order.Price.String()
+	}
+
+	size := ""
+	if order.Size.IsPositive() {
+		size = order.Size.String()
+	}
+
+	notional := ""
+	if order.NotionalSize.IsPositive() {
+		notional = order.NotionalSize.String()
+	}
 	orderRequest := placeOrderRequest{
 		Symbol:        order.Symbol,
-		Side:          string(order.Side),
-		Type:          string(order.Type),
-		Price:         order.Price,
-		Notional:      order.NotionalSize,
-		Size:          order.Size,
+		Side:          strings.ToUpper(string(order.Side)),
+		Type:          strings.ToUpper(string(order.Type)),
+		Price:         price,
+		Notional:      notional,
+		Size:          size,
 		ClientOrderID: order.ClientOrderID,
-		TimeInForce:   string(order.TimeInForce),
+		TimeInForce:   strings.ToUpper(string(order.TimeInForce)),
 	}
 
 	if order.PostOnly {

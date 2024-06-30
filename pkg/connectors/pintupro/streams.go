@@ -380,8 +380,12 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 				time.Sleep(time.Second)
 				goto loop
 			}
-		case msg := <-rawCh:
-			log.Print(string(msg))
+		case msg, ok := <-rawCh:
+			if !ok {
+				return
+			}
+
+			atomic.StoreInt64(&p.lastReceived, time.Now().UnixNano())
 
 			var r wsMessage
 			if err := json.Unmarshal(msg, &r); err != nil {

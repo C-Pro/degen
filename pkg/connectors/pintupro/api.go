@@ -97,6 +97,8 @@ func (api *API) callPrivate(
 		return err
 	}
 
+	fmt.Println(string(b))
+
 	body := bytes.NewReader(b)
 	apiURL, err := url.JoinPath(api.baseURL, "v1", method)
 	if err != nil {

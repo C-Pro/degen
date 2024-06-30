@@ -782,17 +782,11 @@ func easyjson8536833dDecodeDegenPkgConnectorsPintupro5(in *jlexer.Lexer, out *pl
 		case "type":
 			out.Type = string(in.String())
 		case "price":
-			if data := in.Raw(); in.Ok() {
-				in.AddError((out.Price).UnmarshalJSON(data))
-			}
+			out.Price = string(in.String())
 		case "size":
-			if data := in.Raw(); in.Ok() {
-				in.AddError((out.Size).UnmarshalJSON(data))
-			}
+			out.Size = string(in.String())
 		case "notional":
-			if data := in.Raw(); in.Ok() {
-				in.AddError((out.Notional).UnmarshalJSON(data))
-			}
+			out.Notional = string(in.String())
 		case "client_order_id":
 			out.ClientOrderID = string(in.String())
 		case "time_in_force":
@@ -828,20 +822,20 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro5(out *jwriter.Writer, in p
 		out.RawString(prefix)
 		out.String(string(in.Type))
 	}
-	if true {
+	if in.Price != "" {
 		const prefix string = ",\"price\":"
 		out.RawString(prefix)
-		out.Raw((in.Price).MarshalJSON())
+		out.String(string(in.Price))
 	}
-	if true {
+	if in.Size != "" {
 		const prefix string = ",\"size\":"
 		out.RawString(prefix)
-		out.Raw((in.Size).MarshalJSON())
+		out.String(string(in.Size))
 	}
-	if true {
+	if in.Notional != "" {
 		const prefix string = ",\"notional\":"
 		out.RawString(prefix)
-		out.Raw((in.Notional).MarshalJSON())
+		out.String(string(in.Notional))
 	}
 	if in.ClientOrderID != "" {
 		const prefix string = ",\"client_order_id\":"
