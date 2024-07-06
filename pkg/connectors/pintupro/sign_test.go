@@ -129,6 +129,62 @@ func TestWrapAndSign(t *testing.T) {
 		ts        time.Time
 		expected  Envelope
 	}{
+		/*
+{
+    "request_id": "9f53b794-ae60-4155-b7df-b65c691535f4",
+    "timestamp": 1719733351080,
+    "method": "private/place-order",
+    "params": {
+        "symbol": "BTC-IDR",
+        "side": "SELL",
+        "type": "LIMIT",
+        "price": "1003716000",
+        "size": "0.01",
+        "notional": "0",
+        "client_order_id": "426560af-25ce-4b58-a400-30cd2f0a841c",
+        "time_in_force": "GTC",
+        "exec_inst": "POST_ONLY"
+    },
+    "signature": "bed43b83fc8663f49b8d2a33224d87fe6dbacd4b664def8512ffe84683b1dcd7",
+    "api_key": "abc0"
+}		*/
+		{
+			name:      "place order 1",
+			method:    "private/place-order",
+			key:       "abc0",
+			secret: "abc",
+			requestID: "9f53b794-ae60-4155-b7df-b65c691535f4",
+			params: map[string]interface{}{
+				"symbol": "BTC-IDR",
+				"side": "SELL",
+				"type": "LIMIT",
+				"price": "1003716000",
+				"size": "0.01",
+				"notional": "0",
+				"client_order_id": "426560af-25ce-4b58-a400-30cd2f0a841c",
+				"time_in_force": "GTC",
+				"exec_inst": "POST_ONLY",
+			},
+			ts: time.Unix(0, 1719733351080*int64(time.Millisecond)),
+			expected: Envelope{
+				RequestID: "9f53b794-ae60-4155-b7df-b65c691535f4",
+				Timestamp: 1719733351080,
+				Method:    "private/place-order",
+				Params: map[string]interface{}{
+					"symbol": "BTC-IDR",
+					"side": "SELL",
+					"type": "LIMIT",
+					"price": "1003716000",
+					"size": "0.01",
+					"notional": "0",
+					"client_order_id": "426560af-25ce-4b58-a400-30cd2f0a841c",
+					"time_in_force": "GTC",
+					"exec_inst": "POST_ONLY",
+				},
+				Signature: "bed43b83fc8663f49b8d2a33224d87fe6dbacd4b664def8512ffe84683b1dcd7",
+				APIKey: "abc0",
+			},
+		},
 		{
 			name:      "simple",
 			method:    "private/whatever",
