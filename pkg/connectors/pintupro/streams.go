@@ -112,9 +112,6 @@ func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) e
 	if len(symbols) == 0 {
 		return nil
 	}
-	if symbols[0] == "error" {
-		return errors.New("SubscribeBookTickers error")
-	}
 
 	streams := make([]string, len(symbols))
 	for i, s := range symbols {
@@ -125,8 +122,6 @@ func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) e
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	p.subscribedStreams = append(p.subscribedStreams, streams...)
-
 	return nil
 }
 
@@ -134,9 +129,7 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 	if len(symbols) == 0 {
 		return nil
 	}
-	if symbols[0] == "error" {
-		return errors.New("SubscribeBookAggTrades error")
-	}
+
 	streams := make([]string, len(symbols))
 	for i, s := range symbols {
 		streams[i] = "trades." + s
@@ -146,10 +139,44 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
-	p.subscribedStreams = append(p.subscribedStreams, streams...)
+	return nil
+}
+
+func (p *PintuPro) SubscribeUserBalance(ctx context.Context) error {
+	if p.key == "" {
+		return errors.New("SubscribeUserBalance: connection is not authenticated")
+	}
+
+	if err := p.subscribeStreams(ctx, []string{"user.balance"}); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
 
 	return nil
 }
+
+// easyjson:json
+type orderStatusMsg struct {
+	Status        string          `json:"status"`
+	Symbol        string          `json:"symbol"`
+	Reason        string          `json:"reason"`
+	Type          string          `json:"type"`
+	TimeInForce   string          `json:"time_in_force"`
+	ExecInst      string          `json:"exec_inst"`
+	Side          string          `json:"side"`
+	Price         decimal.Decimal `json:"price"`
+	Size          decimal.Decimal `json:"size"`
+	Notional      decimal.Decimal `json:"notional"`
+	CumPrice      decimal.Decimal `json:"cum_price"`
+	CumSize       decimal.Decimal `json:"cum_size"`
+	CumValue      decimal.Decimal `json:"cum_value"`
+	OrderID       string          `json:"order_id"`
+	ClientOrderID string          `json:"client_order_id"`
+	CreatedAt     int64           `json:"created_at"`
+	UpdatedAt     int64           `json:"updated_at"`
+}
+
+// easyjson:json
+type userOrdersMsg []orderStatusMsg
 
 //easyjson:json
 type wsMessage struct {
@@ -163,6 +190,125 @@ type wsMessage struct {
 	Data      json.RawMessage `json:"data"`
 }
 
+func (p *PintuPro) handleUserOrders(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	var orders userOrdersMsg
+	if err := json.Unmarshal(msg.Data, &orders); err != nil {
+		return fmt.Errorf("failed to unmarshal user orders: %w", err)
+	}
+
+	for _, o := range orders {
+		order, err := toOrder(o)
+		if err != nil {
+			return fmt.Errorf("failed to convert order: %w", err)
+		}
+		ch <- models.ExchangeMessage{
+			Exchange:  Name,
+			Symbol:    o.Symbol,
+			Timestamp: tsToTime(o.UpdatedAt),
+			MsgType:   models.MsgTypeOrderStatus,
+			Payload:   order,
+		}
+	}
+
+	return nil
+}
+
+func toOrder(o orderStatusMsg) (models.Order, error) {
+	side := models.OrderSideBuy
+	if o.Side == "SELL" {
+		side = models.OrderSideSell
+	}
+
+	var otype models.OrderType
+	switch o.Type {
+	case "LIMIT":
+		otype = models.OrderTypeLimit
+	case "MARKET":
+		otype = models.OrderTypeMarket
+	default:
+		return models.Order{}, fmt.Errorf("unknown order type: %s", o.Type)
+	}
+
+	status := models.OrderStatusNew
+	switch o.Status {
+	case "NEW":
+		status = models.OrderStatusNew
+	case "PARTIALLY_FILLED":
+		status = models.OrderStatusPartiallyFilled
+	case "FILLED":
+		status = models.OrderStatusFilled
+	case "CANCELED":
+		status = models.OrderStatusCanceled
+	case "REJECTED":
+		status = models.OrderStatusRejected
+	default:
+		return models.Order{}, fmt.Errorf("unknown order status: %s", o.Status)
+	}
+
+	var timeInForce models.TimeInForce
+	switch o.TimeInForce {
+	case "GTC":
+		timeInForce = models.TimeInForceGTC
+	case "IOC":
+		timeInForce = models.TimeInForceIOC
+	case "FOK":
+		timeInForce = models.TimeInForceFOK
+	default:
+		return models.Order{}, fmt.Errorf("unknown time in force: %s", o.TimeInForce)
+	}
+
+	parts := strings.Split(o.Symbol, "-")
+	if len(parts) != 2 {
+		return models.Order{}, fmt.Errorf("invalid symbol: %s", o.Symbol)
+	}
+
+	final := false
+	if otype == models.OrderTypeMarket && timeInForce == models.TimeInForceIOC {
+		final = true
+	}
+
+	if otype == models.OrderTypeLimit &&
+		(status == models.OrderStatusFilled ||
+			status == models.OrderStatusCanceled ||
+			status == models.OrderStatusRejected) {
+		final = true
+	}
+
+	return models.Order{
+		ExchangeOrderID: o.OrderID,
+		ClientOrderID:   o.ClientOrderID,
+		Symbol:          o.Symbol,
+		Base:            parts[0],
+		Quote:           parts[1],
+		Side:            side,
+		Type:            otype,
+		Status:          status,
+		Price:           o.Price,
+		Size:            o.Size,
+		NotionalSize:    o.Notional,
+		FilledSize:      o.CumSize,
+		AveragePrice:    o.CumPrice,
+		TimeInForce:     timeInForce,
+		PostOnly:        o.ExecInst == "POST_ONLY",
+		Final:           final,
+
+		CreatedAt: tsToTime(o.CreatedAt),
+		UpdatedAt: tsToTime(o.UpdatedAt),
+	}, nil
+}
+
+func (p *PintuPro) SubscribeUserOrders(ctx context.Context) error {
+	if p.key == "" {
+		return errors.New("SubscribeUserOrders: connection is not authenticated")
+	}
+
+	if err := p.subscribeStreams(ctx, []string{"user.orders"}); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
+	return nil
+}
+
 func (p *PintuPro) registerWSHandlers() {
 	p.wsHandlers = map[string]wsHandlerFunc{
 		"heartbeat-request":  p.handleHeartbeat,
@@ -170,8 +316,8 @@ func (p *PintuPro) registerWSHandlers() {
 		"trades.":            p.handlePublicTrades,
 		"aggrbook.snapshot.": p.handleOrderBook,
 		"public/auth":        p.handleAuth,
-		// "user.balance":       p.handleUserBalance,
-		// "user.orders":        p.handleUserOrders,
+		"user.balance":       p.handleUserBalance,
+		"user.orders":        p.handleUserOrders,
 		// "user.orders.snapshot": p.handleUserOrdersSnapshot,
 		// "user.trades":        p.handleUserTrades,
 		// "user.trades.snapshot": p.handleUserTradesSnapshot,
@@ -228,6 +374,44 @@ func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMes
 	}
 	log.Printf("subscribed to %s", sub.Channel)
 	p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
+
+	return nil
+}
+
+// easyjson:json
+type walletSnapshotMsg struct {
+	Balance   decimal.Decimal `json:"balance"`
+	Available decimal.Decimal `json:"available"`
+	Order     decimal.Decimal `json:"order"`
+}
+
+// easyjson:json
+type walletsMsg map[string]walletSnapshotMsg
+
+// easyjson:json
+type balanceSnapshotMsg struct {
+	Assets walletsMsg `json:"assets"`
+}
+
+func (p *PintuPro) handleUserBalance(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	var balances balanceSnapshotMsg
+	if err := json.Unmarshal(msg.Data, &balances); err != nil {
+		return fmt.Errorf("failed to unmarshal balance snapshot: %w", err)
+	}
+
+	for asset, wallet := range balances.Assets {
+		ch <- models.ExchangeMessage{
+			Exchange:  Name,
+			Symbol:    asset,
+			Timestamp: tsToTime(msg.Timestamp),
+			MsgType:   models.MsgTypeBalanceUpdate,
+			Payload: models.Balance{
+				Total:     wallet.Balance,
+				Available: wallet.Available,
+				UpdatedAt: time.Now(),
+			},
+		}
+	}
 
 	return nil
 }
