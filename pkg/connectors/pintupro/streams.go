@@ -229,7 +229,7 @@ func toOrder(o orderStatusMsg) (models.Order, error) {
 		return models.Order{}, fmt.Errorf("unknown order type: %s", o.Type)
 	}
 
-	status := models.OrderStatusNew
+	var status models.OrderStatus
 	switch o.Status {
 	case "NEW":
 		status = models.OrderStatusNew
