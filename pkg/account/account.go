@@ -23,6 +23,8 @@ type exchange interface {
 	Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 	SubscribeBookTickers(ctx context.Context, symbols []string) error
 	SubscribeBookAggTrades(ctx context.Context, symbols []string) error
+	SubscribeUserOrders(ctx context.Context) error
+	SubscribeUserBalance(ctx context.Context) error
 }
 
 type Account struct {

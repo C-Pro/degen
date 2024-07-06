@@ -64,7 +64,17 @@ func main() {
 	go ptu.Listen(ctx, ch)
 
 	if err := ptu.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
-		log.Printf("failed to subscribe: %v\n", err)
+		log.Printf("failed to subscribe tiker: %v\n", err)
+		return
+	}
+
+	if err := ptu.SubscribeUserBalance(ctx); err != nil {
+		log.Printf("failed to subscribe balance: %v\n", err)
+		return
+	}
+
+	if err := ptu.SubscribeUserOrders(ctx); err != nil {
+		log.Printf("failed to subscribe orders: %v\n", err)
 		return
 	}
 

@@ -103,7 +103,7 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			}
 		}
 
-		if !(bid != nil && bid.Price.Equal(desiredBid)) {
+		if bid == nil || !bid.Price.Equal(desiredBid) {
 			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideBuy,
@@ -125,7 +125,7 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			}
 		}
 
-		if !(ask != nil && ask.Price.Equal(desiredAsk)) {
+		if ask == nil || !ask.Price.Equal(desiredAsk) {
 			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideSell,
