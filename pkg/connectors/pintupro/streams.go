@@ -176,7 +176,9 @@ type orderStatusMsg struct {
 }
 
 // easyjson:json
-type userOrdersMsg []orderStatusMsg
+type userOrdersMsg struct {
+	Orders []orderStatusMsg `json:"orders"`
+}
 
 //easyjson:json
 type wsMessage struct {
@@ -196,7 +198,7 @@ func (p *PintuPro) handleUserOrders(msg wsMessage, ch chan<- models.ExchangeMess
 		return fmt.Errorf("failed to unmarshal user orders: %w", err)
 	}
 
-	for _, o := range orders {
+	for _, o := range orders.Orders {
 		order, err := toOrder(o)
 		if err != nil {
 			return fmt.Errorf("failed to convert order: %w", err)
@@ -231,8 +233,8 @@ func toOrder(o orderStatusMsg) (models.Order, error) {
 
 	var status models.OrderStatus
 	switch o.Status {
-	case "NEW":
-		status = models.OrderStatusNew
+	case "PLACED":
+		status = models.OrderStatusPlaced
 	case "PARTIALLY_FILLED":
 		status = models.OrderStatusPartiallyFilled
 	case "FILLED":
@@ -570,6 +572,8 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 			}
 
 			atomic.StoreInt64(&p.lastReceived, time.Now().UnixNano())
+
+			// log.Printf("WS: %s", string(msg))
 
 			var r wsMessage
 			if err := json.Unmarshal(msg, &r); err != nil {

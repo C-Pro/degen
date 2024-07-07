@@ -54,6 +54,7 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 				ws.connCancel()
 				return fmt.Errorf("websocket.Pong error: %v", err)
 			}
+			continue
 		}
 
 		if time.Since(lastPing) > pingInterval {

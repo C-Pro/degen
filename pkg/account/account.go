@@ -144,6 +144,7 @@ func (a *Account) UpdateOrder(order models.Order) {
 	if err == nil && existing.Status == models.OrderStatusNew {
 		log.Printf("Order time to book: %s\n", order.CreatedAt.Sub(existing.PlacedAt))
 		log.Printf("Order e2e time: %s\n", order.UpdatedAt.Sub(existing.PlacedAt))
+		log.Printf("%#v", order)
 		metrics.RecordPlaceOrderDuration(
 			a.exchange.Name(),
 			existing.PlacedAt,
@@ -205,7 +206,7 @@ func (a *Account) PlaceOrder(ctx context.Context, order models.Order) (*models.O
 		return nil, err
 	}
 
-	a.UpdateOrder(*o)
+	a.orders.Set(orderKey(order), *o)
 	return o, nil
 }
 

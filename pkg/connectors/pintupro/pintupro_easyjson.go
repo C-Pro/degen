@@ -288,44 +288,76 @@ func (v *walletSnapshotMsg) UnmarshalEasyJSON(l *jlexer.Lexer) {
 func easyjson8536833dDecodeDegenPkgConnectorsPintupro3(in *jlexer.Lexer, out *userOrdersMsg) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
 		in.Skip()
-		*out = nil
-	} else {
-		in.Delim('[')
-		if *out == nil {
-			if !in.IsDelim(']') {
-				*out = make(userOrdersMsg, 0, 0)
-			} else {
-				*out = userOrdersMsg{}
-			}
-		} else {
-			*out = (*out)[:0]
-		}
-		for !in.IsDelim(']') {
-			var v3 orderStatusMsg
-			(v3).UnmarshalEasyJSON(in)
-			*out = append(*out, v3)
-			in.WantComma()
-		}
-		in.Delim(']')
+		return
 	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeFieldName(false)
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "orders":
+			if in.IsNull() {
+				in.Skip()
+				out.Orders = nil
+			} else {
+				in.Delim('[')
+				if out.Orders == nil {
+					if !in.IsDelim(']') {
+						out.Orders = make([]orderStatusMsg, 0, 0)
+					} else {
+						out.Orders = []orderStatusMsg{}
+					}
+				} else {
+					out.Orders = (out.Orders)[:0]
+				}
+				for !in.IsDelim(']') {
+					var v3 orderStatusMsg
+					(v3).UnmarshalEasyJSON(in)
+					out.Orders = append(out.Orders, v3)
+					in.WantComma()
+				}
+				in.Delim(']')
+			}
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
 	if isTopLevel {
 		in.Consumed()
 	}
 }
 func easyjson8536833dEncodeDegenPkgConnectorsPintupro3(out *jwriter.Writer, in userOrdersMsg) {
-	if in == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
-		out.RawString("null")
-	} else {
-		out.RawByte('[')
-		for v4, v5 := range in {
-			if v4 > 0 {
-				out.RawByte(',')
+	out.RawByte('{')
+	first := true
+	_ = first
+	{
+		const prefix string = ",\"orders\":"
+		out.RawString(prefix[1:])
+		if in.Orders == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+			out.RawString("null")
+		} else {
+			out.RawByte('[')
+			for v4, v5 := range in.Orders {
+				if v4 > 0 {
+					out.RawByte(',')
+				}
+				(v5).MarshalEasyJSON(out)
 			}
-			(v5).MarshalEasyJSON(out)
+			out.RawByte(']')
 		}
-		out.RawByte(']')
 	}
+	out.RawByte('}')
 }
 
 // MarshalJSON supports json.Marshaler interface
