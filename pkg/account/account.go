@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -20,6 +21,7 @@ type exchange interface {
 	GetAccountInfo(ctx context.Context) (*models.AccountInfo, error)
 	PlaceOrder(ctx context.Context, order models.Order) (*models.Order, error)
 	CancelOrder(ctx context.Context, order models.Order) (*models.Order, error)
+	CancelAllOrders(ctx context.Context, symbol string) error
 	Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 	SubscribeBookTickers(ctx context.Context, symbols []string) error
 	SubscribeBookAggTrades(ctx context.Context, symbols []string) error
@@ -140,6 +142,7 @@ func orderKey(order models.Order) string {
 
 func (a *Account) UpdateOrder(order models.Order) {
 	key := orderKey(order)
+	log.Printf("update for order %s: %v", key, order)
 	existing, err := a.orders.Get(key)
 	if err == nil && existing.Status == models.OrderStatusNew {
 		log.Printf("Order time to book: %s\n", order.CreatedAt.Sub(existing.PlacedAt))
@@ -153,6 +156,7 @@ func (a *Account) UpdateOrder(order models.Order) {
 	if order.Final {
 		// nolint:errcheck
 		a.orders.Del(key)
+		log.Printf("order %s () deleted", key)
 		return
 	}
 
@@ -201,17 +205,33 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 func (a *Account) PlaceOrder(ctx context.Context, order models.Order) (*models.Order, error) {
 	order.PlacedAt = time.Now().UTC()
 	order.Status = models.OrderStatusNew
+	a.orders.Set(orderKey(order), order)
 	o, err := a.exchange.PlaceOrder(ctx, order)
 	if err != nil {
+		a.orders.Del(orderKey(order))
 		return nil, err
 	}
 
-	a.orders.Set(orderKey(order), *o)
+	if o.Final {
+		a.orders.Del(orderKey(order))
+	}
+
 	return o, nil
 }
 
 func (a *Account) CancelOrder(ctx context.Context, order models.Order) (*models.Order, error) {
-	return a.exchange.CancelOrder(ctx, order)
+	o, err := a.exchange.CancelOrder(ctx, order)
+	if time.Since(order.PlacedAt) > time.Second*10 && errors.Is(err, models.ErrOrderNotFound) {
+		a.orders.Del(orderKey(order))
+		order.Status = models.OrderStatusCanceled
+		return &order, nil
+	}
+
+	return o, err
+}
+
+func (a *Account) CancelAllOrders(ctx context.Context, symbol string) error {
+	return a.exchange.CancelAllOrders(ctx, symbol)
 }
 
 func (a *Account) GetOrder(symbol, clientOrderID string) *models.Order {

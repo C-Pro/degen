@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,7 +51,7 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 		var toSubscribe []string
 		p.mux.RLock()
 		if len(p.subscribedStreams) > 0 {
-			toSubscribe = p.subscribedStreams
+			toSubscribe = slices.Clone(p.subscribedStreams)
 			p.subscribedStreams = p.subscribedStreams[:0]
 		}
 		p.mux.RUnlock()
@@ -573,7 +574,7 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 
 			atomic.StoreInt64(&p.lastReceived, time.Now().UnixNano())
 
-			// log.Printf("WS: %s", string(msg))
+			log.Printf("WS: %s", string(msg))
 
 			var r wsMessage
 			if err := json.Unmarshal(msg, &r); err != nil {

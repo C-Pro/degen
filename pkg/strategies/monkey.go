@@ -3,6 +3,7 @@ package strategies
 import (
 	"context"
 	"log"
+	"strings"
 
 	"degen/pkg/account"
 	"degen/pkg/models"
@@ -14,17 +15,18 @@ import (
 // Monkey is a simplest market maker that follows
 // the current midprice and places orders with defined spread.
 type Monkey struct {
-	orderSize decimal.Decimal
-	symbol    models.SymbolInfo
-	acc       *account.Account
-	spread    decimal.Decimal
+	orderNotional decimal.Decimal
+	symbol        models.SymbolInfo
+	acc           *account.Account
+	spread        decimal.Decimal
+	tolerance     decimal.Decimal
 }
 
 func NewMonkey(
 	ctx context.Context,
 	acc *account.Account,
 	symbol string,
-	orderSize decimal.Decimal,
+	orderNotional decimal.Decimal,
 	spread decimal.Decimal,
 ) *Monkey {
 	symbols, err := acc.GetSymbols(ctx)
@@ -38,10 +40,20 @@ func NewMonkey(
 		return nil
 	}
 
+	log.Printf("Symbol %s", s.Symbol)
+	log.Printf("PriceTick: %s", s.PriceTickSize.String())
+	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
+	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
+		log.Printf("failed to cancel all orders: %v\n", err)
+		return nil
+	}
+
 	m := &Monkey{
-		acc:       acc,
-		symbol:    s,
-		orderSize: orderSize,
+		acc:           acc,
+		symbol:        s,
+		spread:        spread,
+		orderNotional: orderNotional,
+		tolerance:     spread.Mul(decimal.NewFromFloat(0.2)),
 	}
 
 	return m
@@ -57,23 +69,45 @@ func roundDown(v, tick decimal.Decimal) decimal.Decimal {
 	return v.Div(tick).Floor().Mul(tick)
 }
 
+func (m *Monkey) calcOrderSize(
+	notional decimal.Decimal,
+	bbo decimal.Decimal,
+) decimal.Decimal {
+	size := roundUp(notional.Div(bbo), m.symbol.QuantityTickSize)
+	if size.LessThan(m.symbol.MinQuantity) {
+		return m.symbol.MinQuantity
+	}
+
+	return size
+}
+
+func (m *Monkey) withinTolerance(a, b decimal.Decimal) bool {
+	return a.Sub(b).Abs().LessThan(a.Mul(m.tolerance))
+}
+
 func (m *Monkey) See(e models.ExchangeMessage) {
 	if e.Symbol != m.symbol.Symbol {
 		return
 	}
 
 	orders := m.acc.GetOrders(m.symbol.Symbol)
-	if len(orders) != 0 && len(orders) != 2 {
-		log.Printf("unexpected number of orders: %d\n", len(orders))
-		return
-	}
 
-	var bid, ask *models.Order
+	var bids, asks []models.Order
 	for _, o := range orders {
 		if o.Side == models.OrderSideBuy {
-			bid = &o
+			bids = append(bids, o)
 		} else {
-			ask = &o
+			asks = append(asks, o)
+		}
+	}
+
+	// Hack to prevent too many orders.
+	if len(orders) > 4 {
+		if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
+			log.Printf("failed to cancel all orders: %v\n", err)
+		} else {
+			bids = nil
+			asks = nil
 		}
 	}
 
@@ -90,27 +124,32 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
 		}
 
-		desiredBid := roundDown(midprice.Sub(m.spread.Div(two)), m.symbol.PriceTickSize)
-		desiredAsk := roundUp(midprice.Add(m.spread.Div(two)), m.symbol.PriceTickSize)
+		desiredBid := roundDown(midprice.Sub(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		desiredAsk := roundUp(midprice.Add(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
 
 		// TODO: Makes sense to use batch commands.
 		// toCancel := make([]models.Order, 0, 2)
 		// toPlace := make([]models.Order, 0, 2)
-		if bid != nil && !bid.Price.Equal(desiredBid) {
-			_, err := m.acc.CancelOrder(context.Background(), *bid)
-			if err != nil {
-				log.Printf("failed to cancel bid: %v\n", err)
+		hasDesired := false
+		for _, bid := range bids {
+			if !m.withinTolerance(bid.Price, desiredBid) {
+				_, err := m.acc.CancelOrder(context.Background(), bid)
+				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+					log.Printf("failed to cancel bid: %v\n", err)
+				}
+			} else {
+				hasDesired = true
 			}
 		}
 
-		if bid == nil || !bid.Price.Equal(desiredBid) {
+		if !hasDesired {
 			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideBuy,
 				Type:          models.OrderTypeLimit,
 				PostOnly:      true,
 				Price:         desiredBid,
-				Size:          m.orderSize,
+				Size:          m.calcOrderSize(m.orderNotional, bbo.Ask.Price),
 				ClientOrderID: uuid.NewString(),
 			})
 			if err != nil {
@@ -118,21 +157,26 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			}
 		}
 
-		if ask != nil && !ask.Price.Equal(desiredAsk) {
-			_, err := m.acc.CancelOrder(context.Background(), *ask)
-			if err != nil {
-				log.Printf("failed to cancel ask: %v\n", err)
+		hasDesired = false
+		for _, ask := range asks {
+			if !m.withinTolerance(ask.Price, desiredAsk) {
+				_, err := m.acc.CancelOrder(context.Background(), ask)
+				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+					log.Printf("failed to cancel ask: %v\n", err)
+				}
+			} else {
+				hasDesired = true
 			}
 		}
 
-		if ask == nil || !ask.Price.Equal(desiredAsk) {
+		if !hasDesired {
 			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideSell,
 				Type:          models.OrderTypeLimit,
 				PostOnly:      true,
 				Price:         desiredAsk,
-				Size:          m.orderSize,
+				Size:          m.calcOrderSize(m.orderNotional, bbo.Bid.Price),
 				ClientOrderID: uuid.NewString(),
 			})
 			if err != nil {

@@ -1566,7 +1566,7 @@ func easyjson8536833dEncodeDegenPkgConnectorsPintupro11(out *jwriter.Writer, in 
 		out.RawString(prefix[1:])
 		out.String(string(in.Symbol))
 	}
-	{
+	if in.OrderID != "" {
 		const prefix string = ",\"order_id\":"
 		out.RawString(prefix)
 		out.String(string(in.OrderID))

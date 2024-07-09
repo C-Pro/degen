@@ -84,7 +84,7 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 // easyjson:json
 type cancelOrderRequest struct {
 	Symbol  string `json:"symbol"`
-	OrderID string `json:"order_id"`
+	OrderID string `json:"order_id,omitempty"`
 }
 
 func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Order, error) {
@@ -98,6 +98,10 @@ func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Or
 		return nil, fmt.Errorf("pintupro.CancelOrder: %w", err)
 	}
 
+	if resp.Code == 7 {
+		return nil, models.ErrOrderNotFound
+	}
+
 	if resp.Code != 0 {
 		return nil,
 			fmt.Errorf("pintupro.CancelOrder: unexpected code %d %s %s",
@@ -109,4 +113,23 @@ func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Or
 	// Need to wait for next update on websocket.
 
 	return &order, nil
+}
+
+func (api *API) CancelAllOrders(ctx context.Context, symbol string) error {
+	req := cancelOrderRequest{
+		Symbol: symbol,
+	}
+
+	resp := responseMessage{}
+	if err := api.call("private/cancel-all-orders", &req, &resp); err != nil {
+		return fmt.Errorf("pintupro.CancelAllOrders: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return fmt.Errorf("pintupro.CancelAllOrders: unexpected code %d %s %s",
+			resp.Code, resp.Message, resp.Reason,
+		)
+	}
+
+	return nil
 }

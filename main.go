@@ -20,10 +20,10 @@ import (
 )
 
 var (
-	theSymbol = "SOL-IDR"
-	theAsset  = "IDR"
-	orderSize = decimal.NewFromFloat(0.01)
-	spread    = decimal.NewFromFloat(0.01)
+	theSymbol     = "BTC-IDR"
+	theAsset      = "IDR"
+	orderNotional = decimal.NewFromFloat(150000)
+	spread        = decimal.NewFromFloat(0.0005)
 )
 
 func main() {
@@ -31,6 +31,10 @@ func main() {
 	once := sync.Once{}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	if os.Getenv("SYMBOL") != "" {
+		theSymbol = os.Getenv("SYMBOL")
+	}
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
@@ -84,7 +88,7 @@ func main() {
 		ctx,
 		acc,
 		theSymbol,
-		orderSize,
+		orderNotional,
 		spread,
 	)
 
@@ -106,6 +110,7 @@ func main() {
 	}()
 
 	for msg := range ch {
+		acc.Update(msg)
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
@@ -118,15 +123,9 @@ func main() {
 		case models.MsgTypeBalanceUpdate:
 			upd := msg.Payload.(models.BalanceUpdate)
 			log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
-			acc.UpdateBalance(upd.Asset, upd.Balance, decimal.Zero, msg.Timestamp)
 			once.Do(func() {
 				initialBalance = upd.Balance
 			})
-			continue
-		case models.MsgTypePositionUpdate:
-			upd := msg.Payload.(models.PositionUpdate)
-			// log.Printf("Position %s = %v\n", upd.Symbol, upd.Amount)
-			acc.UpdatePosition(upd.Symbol, upd.Amount, upd.EntryPrice, msg.Timestamp)
 			continue
 		default:
 			continue
