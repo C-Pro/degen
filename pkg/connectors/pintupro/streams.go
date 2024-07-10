@@ -148,7 +148,7 @@ func (p *PintuPro) SubscribeUserBalance(ctx context.Context) error {
 		return errors.New("SubscribeUserBalance: connection is not authenticated")
 	}
 
-	if err := p.subscribeStreams(ctx, []string{"user.balance"}); err != nil {
+	if err := p.subscribeStreams(ctx, []string{"user.balance.snapshot"}); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
@@ -314,13 +314,13 @@ func (p *PintuPro) SubscribeUserOrders(ctx context.Context) error {
 
 func (p *PintuPro) registerWSHandlers() {
 	p.wsHandlers = map[string]wsHandlerFunc{
-		"heartbeat-request":  p.handleHeartbeat,
-		"subscribe":          p.handleSubscription,
-		"trades.":            p.handlePublicTrades,
-		"aggrbook.snapshot.": p.handleOrderBook,
-		"public/auth":        p.handleAuth,
-		"user.balance":       p.handleUserBalance,
-		"user.orders":        p.handleUserOrders,
+		"heartbeat-request":     p.handleHeartbeat,
+		"subscribe":             p.handleSubscription,
+		"trades.":               p.handlePublicTrades,
+		"aggrbook.snapshot.":    p.handleOrderBook,
+		"public/auth":           p.handleAuth,
+		"user.balance.snapshot": p.handleUserBalance,
+		"user.orders":           p.handleUserOrders,
 		// "user.orders.snapshot": p.handleUserOrdersSnapshot,
 		// "user.trades":        p.handleUserTrades,
 		// "user.trades.snapshot": p.handleUserTradesSnapshot,
@@ -376,7 +376,9 @@ func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMes
 		return fmt.Errorf("failed to unmarshal subscription: %w %s", err, msg.Data)
 	}
 	log.Printf("subscribed to %s", sub.Channel)
+	p.mux.Lock()
 	p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
+	p.mux.Unlock()
 
 	return nil
 }
@@ -573,8 +575,6 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 			}
 
 			atomic.StoreInt64(&p.lastReceived, time.Now().UnixNano())
-
-			log.Printf("WS: %s", string(msg))
 
 			var r wsMessage
 			if err := json.Unmarshal(msg, &r); err != nil {

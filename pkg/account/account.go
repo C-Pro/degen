@@ -186,11 +186,11 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 		}
 		a.UpdateOrder(order)
 	case models.MsgTypeBalanceUpdate:
-		bal, ok := upd.Payload.(models.BalanceUpdate)
+		bal, ok := upd.Payload.(models.Balance)
 		if !ok {
 			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
 		}
-		a.UpdateBalance(bal.Asset, bal.Balance, decimal.Zero, upd.Timestamp)
+		a.UpdateBalance(upd.Symbol, bal.Total, bal.Total.Sub(bal.Available), upd.Timestamp)
 	case models.MsgTypePositionUpdate:
 		pos, ok := upd.Payload.(models.PositionUpdate)
 		if !ok {

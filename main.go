@@ -23,7 +23,7 @@ var (
 	theSymbol     = "BTC-IDR"
 	theAsset      = "IDR"
 	orderNotional = decimal.NewFromFloat(150000)
-	spread        = decimal.NewFromFloat(0.0005)
+	spread        = decimal.NewFromFloat(0.001)
 )
 
 func main() {
@@ -109,22 +109,31 @@ func main() {
 		}
 	}()
 
+	prevBid := decimal.Zero
+	prevAsk := decimal.Zero
 	for msg := range ch {
 		acc.Update(msg)
 		switch msg.MsgType {
 		case models.MsgTypeBBO:
 			bbo := msg.Payload.(models.BBO)
-			log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
+			if !bbo.Bid.Price.Equal(prevBid) || !bbo.Ask.Price.Equal(prevAsk) {
+				prevBid = bbo.Bid.Price
+				prevAsk = bbo.Ask.Price
+				log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
+			}
 			monkey.See(msg)
 		case models.MsgTypeOrderStatus:
 			upd := msg.Payload.(models.Order)
 			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
 			continue
 		case models.MsgTypeBalanceUpdate:
-			upd := msg.Payload.(models.BalanceUpdate)
-			log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
+			upd := msg.Payload.(models.Balance)
+			if msg.Symbol != theAsset {
+				continue
+			}
 			once.Do(func() {
-				initialBalance = upd.Balance
+				initialBalance = upd.Total
+				log.Printf("initial balance %s", upd.Total.String())
 			})
 			continue
 		default:
