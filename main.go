@@ -25,7 +25,6 @@ var (
 )
 
 func main() {
-	initialBalance := decimal.Zero
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -70,6 +69,14 @@ func main() {
 		log.Printf("failed to start account: %v\n", err)
 		return
 	}
+	initialBalance := acc.GetBalance(theAsset)
+	log.Printf(
+		`Initial balalance:
+	Total: %s
+	Available: %s
+`, initialBalance.Total.String(),
+		initialBalance.Available.String(),
+	)
 
 	if err := acc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
 		log.Printf("failed to subscribe tiker: %v\n", err)
@@ -94,12 +101,8 @@ func main() {
 				return
 			case <-time.After(time.Second):
 				b := acc.GetBalance(theAsset)
-				if initialBalance.IsZero() {
-					initialBalance = b.Total
-					continue
-				}
 				if b.UpdatedAt.After(lastChange) {
-					pnl := b.Total.Sub(initialBalance)
+					pnl := b.Total.Sub(initialBalance.Total)
 					log.Printf("### Current balance is %v; PNL is %v", b.Total, pnl)
 					lastChange = b.UpdatedAt
 				}
