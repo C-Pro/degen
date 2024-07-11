@@ -526,6 +526,7 @@ func (p *PintuPro) handleOrderBook(msg wsMessage, ch chan<- models.ExchangeMessa
 }
 
 func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+	defer close(ch)
 	errCnt := 0
 	rawCh := make(chan []byte, 100)
 	go func() {

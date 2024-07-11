@@ -29,15 +29,17 @@ type exchange interface {
 	SubscribeUserBalance(ctx context.Context) error
 }
 
+type strategyCallback (func(upd models.ExchangeMessage))
+
 type Account struct {
 	exchange
 	id        string
 	balances  map[string]models.Balance
 	positions map[string]models.Position
 	orders    *geche.KV[models.Order]
-	stopWg    sync.WaitGroup
 	ctx       context.Context
 	cancel    context.CancelFunc
+	strategy  strategyCallback
 
 	mux sync.RWMutex
 }
@@ -52,6 +54,12 @@ func NewAccount(id string, api exchange) *Account {
 	}
 }
 
+func (a *Account) SetStrategy(cb strategyCallback) {
+	a.mux.Lock()
+	defer a.mux.Unlock()
+	a.strategy = cb
+}
+
 func (a *Account) Start(ctx context.Context) error {
 	info, err := a.GetAccountInfo(ctx)
 	if err != nil {
@@ -62,16 +70,14 @@ func (a *Account) Start(ctx context.Context) error {
 	a.positions = info.Positions
 
 	a.ctx, a.cancel = context.WithCancel(ctx)
-	a.stopWg.Add(2)
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
 		a.Listen(a.ctx, ch)
-		a.stopWg.Done()
+		close(ch)
 	}()
 
 	go func() {
 		a.updateLoop(a.ctx, ch)
-		a.stopWg.Done()
 	}()
 
 	return nil
@@ -87,11 +93,6 @@ func (a *Account) SubscribeSymbols(symbols []string) error {
 	return nil
 }
 
-func (a *Account) Stop() {
-	a.cancel()
-	a.stopWg.Wait()
-}
-
 func (a *Account) updateLoop(ctx context.Context, ch chan models.ExchangeMessage) {
 	for {
 		select {
@@ -100,6 +101,12 @@ func (a *Account) updateLoop(ctx context.Context, ch chan models.ExchangeMessage
 		case msg := <-ch:
 			if err := a.Update(msg); err != nil {
 				return
+			}
+			a.mux.RLock()
+			strategy := a.strategy
+			a.mux.RUnlock()
+			if strategy != nil {
+				strategy(msg)
 			}
 		}
 	}

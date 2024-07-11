@@ -24,6 +24,7 @@ type PintuPro struct {
 
 	reconnectCh chan any
 	wsReady     chan any
+	stopWG      sync.WaitGroup
 
 	mux sync.RWMutex
 }

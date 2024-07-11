@@ -6,13 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"degen/pkg/account"
 	"degen/pkg/connectors/pintupro"
-	"degen/pkg/models"
 	"degen/pkg/strategies"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -28,7 +26,6 @@ var (
 
 func main() {
 	initialBalance := decimal.Zero
-	once := sync.Once{}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -41,12 +38,6 @@ func main() {
 		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
 			log.Printf("HTTP server stopped with error: %v", err)
 		}
-	}()
-
-	ch := make(chan models.ExchangeMessage, 100)
-	go func() {
-		<-ctx.Done()
-		close(ch)
 	}()
 
 	ptu, err := pintupro.NewPintuPro(
@@ -65,25 +56,7 @@ func main() {
 		return
 	}
 
-	go ptu.Listen(ctx, ch)
-
-	if err := ptu.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
-		log.Printf("failed to subscribe tiker: %v\n", err)
-		return
-	}
-
-	if err := ptu.SubscribeUserBalance(ctx); err != nil {
-		log.Printf("failed to subscribe balance: %v\n", err)
-		return
-	}
-
-	if err := ptu.SubscribeUserOrders(ctx); err != nil {
-		log.Printf("failed to subscribe orders: %v\n", err)
-		return
-	}
-
 	acc := account.NewAccount("pintu", ptu)
-
 	monkey := strategies.NewMonkey(
 		ctx,
 		acc,
@@ -91,6 +64,27 @@ func main() {
 		orderNotional,
 		spread,
 	)
+
+	acc.SetStrategy(monkey.See)
+	if err := acc.Start(ctx); err != nil {
+		log.Printf("failed to start account: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
+		log.Printf("failed to subscribe tiker: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserBalance(ctx); err != nil {
+		log.Printf("failed to subscribe balance: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserOrders(ctx); err != nil {
+		log.Printf("failed to subscribe orders: %v\n", err)
+		return
+	}
 
 	go func() {
 		var lastChange time.Time
@@ -100,6 +94,10 @@ func main() {
 				return
 			case <-time.After(time.Second):
 				b := acc.GetBalance(theAsset)
+				if initialBalance.IsZero() {
+					initialBalance = b.Total
+					continue
+				}
 				if b.UpdatedAt.After(lastChange) {
 					pnl := b.Total.Sub(initialBalance)
 					log.Printf("### Current balance is %v; PNL is %v", b.Total, pnl)
@@ -109,35 +107,5 @@ func main() {
 		}
 	}()
 
-	prevBid := decimal.Zero
-	prevAsk := decimal.Zero
-	for msg := range ch {
-		acc.Update(msg)
-		switch msg.MsgType {
-		case models.MsgTypeBBO:
-			bbo := msg.Payload.(models.BBO)
-			if !bbo.Bid.Price.Equal(prevBid) || !bbo.Ask.Price.Equal(prevAsk) {
-				prevBid = bbo.Bid.Price
-				prevAsk = bbo.Ask.Price
-				log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
-			}
-			monkey.See(msg)
-		case models.MsgTypeOrderStatus:
-			upd := msg.Payload.(models.Order)
-			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
-			continue
-		case models.MsgTypeBalanceUpdate:
-			upd := msg.Payload.(models.Balance)
-			if msg.Symbol != theAsset {
-				continue
-			}
-			once.Do(func() {
-				initialBalance = upd.Total
-				log.Printf("initial balance %s", upd.Total.String())
-			})
-			continue
-		default:
-			continue
-		}
-	}
+	<-ctx.Done()
 }
