@@ -215,11 +215,13 @@ func (a *Account) PlaceOrder(ctx context.Context, order models.Order) (*models.O
 	a.orders.Set(orderKey(order), order)
 	o, err := a.exchange.PlaceOrder(ctx, order)
 	if err != nil {
+		// nolint:errcheck
 		a.orders.Del(orderKey(order))
 		return nil, err
 	}
 
 	if o.Final {
+		// nolint:errcheck
 		a.orders.Del(orderKey(order))
 	}
 
@@ -229,6 +231,7 @@ func (a *Account) PlaceOrder(ctx context.Context, order models.Order) (*models.O
 func (a *Account) CancelOrder(ctx context.Context, order models.Order) (*models.Order, error) {
 	o, err := a.exchange.CancelOrder(ctx, order)
 	if time.Since(order.PlacedAt) > time.Second*10 && errors.Is(err, models.ErrOrderNotFound) {
+		// nolint:errcheck
 		a.orders.Del(orderKey(order))
 		order.Status = models.OrderStatusCanceled
 		return &order, nil

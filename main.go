@@ -22,6 +22,8 @@ var (
 	theAsset      = "IDR"
 	orderNotional = decimal.NewFromFloat(150000)
 	spread        = decimal.NewFromFloat(0.001)
+
+	maxOrderNotional = decimal.NewFromFloat(1000000)
 )
 
 func main() {
@@ -30,6 +32,29 @@ func main() {
 
 	if os.Getenv("SYMBOL") != "" {
 		theSymbol = os.Getenv("SYMBOL")
+	}
+
+	if os.Getenv("NOTIONAL") != "" {
+		var err error
+		orderNotional, err = decimal.NewFromString(os.Getenv("NOTIONAL"))
+		if err != nil {
+			log.Printf("failed to parse NOTIONAL: %v\n", err)
+			return
+		}
+
+		if orderNotional.LessThanOrEqual(decimal.Zero) || orderNotional.GreaterThan(maxOrderNotional) {
+			log.Printf("NOTIONAL must be greater than 0 and less than %v\n", maxOrderNotional)
+			return
+		}
+	}
+
+	if os.Getenv("SPREAD") != "" {
+		var err error
+		spread, err = decimal.NewFromString(os.Getenv("SPREAD"))
+		if err != nil {
+			log.Printf("failed to parse SPREAD: %v\n", err)
+			return
+		}
 	}
 
 	go func() {
