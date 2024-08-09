@@ -45,23 +45,30 @@ const (
 type Order struct {
 	ClientOrderID   string
 	ExchangeOrderID string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Symbol          string
-	Base            string
-	Quote           string
-	Side            OrderSide
-	Type            OrderType
-	TimeInForce     TimeInForce
-	Status          OrderStatus
+	// Our time when issuing place order command.
+	PlacedAt time.Time
+	// Exchange time when order was accepted.
+	CreatedAt time.Time
+	// Exchange time when order was last updated.
+	UpdatedAt   time.Time
+	Symbol      string
+	Base        string
+	Quote       string
+	Side        OrderSide
+	Type        OrderType
+	TimeInForce TimeInForce
+	Status      OrderStatus
+	Reason      string
+	PostOnly    bool
 	// Final flag is true when order is in its final state.
 	// E.g. filled, rejected, canceled.
 	Final bool
+	Text  string
 
-	Size  decimal.Decimal
-	Price decimal.Decimal
+	Size         decimal.Decimal
+	NotionalSize decimal.Decimal
+	Price        decimal.Decimal
 
 	FilledSize   decimal.Decimal
 	AveragePrice decimal.Decimal
 }
-

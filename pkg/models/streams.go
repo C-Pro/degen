@@ -35,6 +35,18 @@ type BBO struct {
 	Timestamp time.Time
 }
 
+func (b BBO) Midprice() decimal.Decimal {
+	return b.Bid.Price.Add(b.Ask.Price).Div(decimal.NewFromInt(2))
+}
+
+func (b BBO) Spread() (decimal.Decimal, bool) {
+	if b.Bid.Price.IsZero() || b.Ask.Price.IsZero() {
+		return decimal.Zero, false
+	}
+
+	return b.Ask.Price.Sub(b.Bid.Price).Div(b.Ask.Price), true
+}
+
 type BalanceUpdate struct {
 	Asset   string
 	Balance decimal.Decimal

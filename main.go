@@ -3,98 +3,120 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"degen/pkg/connectors/binance"
-	"degen/pkg/models"
+	"degen/pkg/account"
+	"degen/pkg/connectors/pintupro"
 	"degen/pkg/strategies"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shopspring/decimal"
 )
 
-const (
-	theSymbol = "ethusdt"
-	theAsset  = "usdt"
+var (
+	theSymbol     = "BTC-IDR"
+	theAsset      = "IDR"
+	orderNotional = decimal.NewFromFloat(150000)
+	spread        = decimal.NewFromFloat(0.001)
+
+	maxOrderNotional = decimal.NewFromFloat(1000000)
 )
 
 func main() {
-	initialBalance := decimal.Zero
-	once := sync.Once{}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	ch := make(chan models.ExchangeMessage, 100)
-	go func() {
-		<-ctx.Done()
-		close(ch)
-	}()
-
-	bnc := binance.NewBinance(
-		ctx,
-		os.Getenv("BINANCE_KEY"),
-		os.Getenv("BINANCE_SECRET"),
-		"https://testnet.binancefuture.com",
-		"wss://stream.binancefuture.com",
-	)
-
-	if bnc == nil {
-		return
+	if os.Getenv("SYMBOL") != "" {
+		theSymbol = os.Getenv("SYMBOL")
 	}
 
-	go bnc.Listen(ctx, ch)
+	if os.Getenv("NOTIONAL") != "" {
+		var err error
+		orderNotional, err = decimal.NewFromString(os.Getenv("NOTIONAL"))
+		if err != nil {
+			log.Printf("failed to parse NOTIONAL: %v\n", err)
+			return
+		}
 
-	if err := bnc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
-		log.Printf("failed to subscribe: %v\n", err)
-		return
+		if orderNotional.LessThanOrEqual(decimal.Zero) || orderNotional.GreaterThan(maxOrderNotional) {
+			log.Printf("NOTIONAL must be greater than 0 and less than %v\n", maxOrderNotional)
+			return
+		}
 	}
 
-	acc := models.NewAccount("binance", bnc)
+	if os.Getenv("SPREAD") != "" {
+		var err error
+		spread, err = decimal.NewFromString(os.Getenv("SPREAD"))
+		if err != nil {
+			log.Printf("failed to parse SPREAD: %v\n", err)
+			return
+		}
+	}
 
-	monkey := strategies.NewMonkey(ctx, acc)
 	go func() {
-		for {
-			select {
-			case side := <-monkey.Say():
-				log.Printf("MONKEY WANNA %s!\n", strings.ToUpper(string(side)))
-				order := models.Order{
-					CreatedAt: time.Now().UTC(),
-					Symbol:    theSymbol,
-					Size:      decimal.NewFromFloat(0.25),
-					Side:      side,
-					Type:      models.OrderTypeMarket,
-				}
-				res, err := bnc.API.PlaceOrder(ctx, order)
-				if err != nil {
-					log.Printf("monkey has failed to place an order: %v", err)
-					continue
-				}
-
-				if res.Type == models.OrderTypeMarket {
-					log.Printf("monkey has placed a %s order to %s %v %s\n",
-						res.Type,
-						res.Side,
-						res.Size,
-						res.Symbol,
-					)
-				} else {
-					log.Printf("monkey has placed a %s order to %s %v %s at %v\n",
-						res.Type,
-						res.Side,
-						res.Size,
-						res.Symbol,
-						res.Price,
-					)
-				}
-			case <-ctx.Done():
-				return
-			}
+		http.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
+			log.Printf("HTTP server stopped with error: %v", err)
 		}
 	}()
+
+	ptu, err := pintupro.NewPintuPro(
+		ctx,
+		os.Getenv("PINTUPRO_KEY"),
+		os.Getenv("PINTUPRO_SECRET"),
+		os.Getenv("PINTUPRO_API_BASE_URL"),
+		os.Getenv("PINTUPRO_WS_URL"),
+	)
+	if err != nil {
+		log.Printf("failed to init connector: %v\n", err)
+		return
+	}
+
+	if ptu == nil {
+		return
+	}
+
+	acc := account.NewAccount("pintu", ptu)
+	monkey := strategies.NewMonkey(
+		ctx,
+		acc,
+		theSymbol,
+		orderNotional,
+		spread,
+	)
+
+	acc.SetStrategy(monkey.See)
+	if err := acc.Start(ctx); err != nil {
+		log.Printf("failed to start account: %v\n", err)
+		return
+	}
+	initialBalance := acc.GetBalance(theAsset)
+	log.Printf(
+		`Initial balalance:
+	Total: %s
+	Available: %s
+`, initialBalance.Total.String(),
+		initialBalance.Available.String(),
+	)
+
+	if err := acc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
+		log.Printf("failed to subscribe tiker: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserBalance(ctx); err != nil {
+		log.Printf("failed to subscribe balance: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserOrders(ctx); err != nil {
+		log.Printf("failed to subscribe orders: %v\n", err)
+		return
+	}
 
 	go func() {
 		var lastChange time.Time
@@ -105,7 +127,7 @@ func main() {
 			case <-time.After(time.Second):
 				b := acc.GetBalance(theAsset)
 				if b.UpdatedAt.After(lastChange) {
-					pnl := b.Total.Sub(initialBalance)
+					pnl := b.Total.Sub(initialBalance.Total)
 					log.Printf("### Current balance is %v; PNL is %v", b.Total, pnl)
 					lastChange = b.UpdatedAt
 				}
@@ -113,31 +135,5 @@ func main() {
 		}
 	}()
 
-	for msg := range ch {
-		switch msg.MsgType {
-		case models.MsgTypeBBO:
-			bbo := msg.Payload.(models.BBO)
-			log.Printf("BBO %s:%s", bbo.Bid.Price.String(), bbo.Ask.Price.String())
-			monkey.See(msg)
-		case models.MsgTypeOrderStatus:
-			upd := msg.Payload.(models.Order)
-			log.Printf("%s: %s (%v at %v)\n", upd.ExchangeOrderID, upd.Status, upd.FilledSize, upd.AveragePrice)
-			continue
-		case models.MsgTypeBalanceUpdate:
-			upd := msg.Payload.(models.BalanceUpdate)
-			// log.Printf("Balance %s = %v\n", upd.Asset, upd.Balance)
-			acc.UpdateBalance(upd.Asset, upd.Balance, decimal.Zero, msg.Timestamp)
-			once.Do(func() {
-				initialBalance = upd.Balance
-			})
-			continue
-		case models.MsgTypePositionUpdate:
-			upd := msg.Payload.(models.PositionUpdate)
-			// log.Printf("Position %s = %v\n", upd.Symbol, upd.Amount)
-			acc.UpdatePosition(upd.Symbol, upd.Amount, upd.EntryPrice, msg.Timestamp)
-			continue
-		default:
-			continue
-		}
-	}
+	<-ctx.Done()
 }

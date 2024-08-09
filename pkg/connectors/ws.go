@@ -54,6 +54,7 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 				ws.connCancel()
 				return fmt.Errorf("websocket.Pong error: %v", err)
 			}
+			continue
 		}
 
 		if time.Since(lastPing) > pingInterval {
@@ -63,6 +64,8 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 			}
 			lastPing = time.Now()
 		}
+
+		// log.Printf("WS IN: %s", string(msg))
 
 		ch <- msg
 
@@ -77,6 +80,8 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 func (ws *WS) Write(ctx context.Context, msg []byte) error {
 	ws.mux.Lock()
 	defer ws.mux.Unlock()
+	// log.Printf("WS OUT: %s", string(msg))
+
 	return ws.conn.WriteMessage(websocket.TextMessage, msg)
 }
 

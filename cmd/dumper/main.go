@@ -118,8 +118,8 @@ func main() {
 		ctx,
 		os.Getenv("BINANCE_KEY"),
 		os.Getenv("BINANCE_SECRET"),
-		"https://fapi.binance.com",
-		"wss://fstream.binance.com",
+		"https://api.binance.com",
+		"wss://stream.binance.com",
 	)
 
 	if bnc == nil {

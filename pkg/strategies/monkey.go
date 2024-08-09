@@ -3,126 +3,185 @@ package strategies
 import (
 	"context"
 	"log"
-	"sync/atomic"
-	"time"
+	"strings"
 
+	"degen/pkg/account"
 	"degen/pkg/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
 
-const (
-	patience = 1
-	symbol   = "ethusdt"
-	slippage = 0.005
-)
-
+// Monkey is a simplest market maker that follows
+// the current midprice and places orders with defined spread.
 type Monkey struct {
-	ch               chan models.OrderSide
-	cntUp, cntDown   int
-	prevBid, prevAsk models.PriceLevel
-	numEvents        uint32
-	acc              *models.Account
+	orderNotional decimal.Decimal
+	symbol        models.SymbolInfo
+	acc           *account.Account
+	spread        decimal.Decimal
+	tolerance     decimal.Decimal
 }
 
 func NewMonkey(
 	ctx context.Context,
-	acc *models.Account,
+	acc *account.Account,
+	symbol string,
+	orderNotional decimal.Decimal,
+	spread decimal.Decimal,
 ) *Monkey {
-	m := &Monkey{
-		ch:  make(chan models.OrderSide),
-		acc: acc,
+	symbols, err := acc.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return nil
+	}
+	s, ok := symbols[symbol]
+	if !ok {
+		log.Printf("symbol %s not found\n", symbol)
+		return nil
 	}
 
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				atomic.StoreUint32(&m.numEvents, 0)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	log.Printf("Symbol %s", s.Symbol)
+	log.Printf("PriceTick: %s", s.PriceTickSize.String())
+	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
+	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
+		log.Printf("failed to cancel all orders: %v\n", err)
+		return nil
+	}
+
+	m := &Monkey{
+		acc:           acc,
+		symbol:        s,
+		spread:        spread,
+		orderNotional: orderNotional,
+		tolerance:     spread.Mul(decimal.NewFromFloat(0.2)),
+	}
 
 	return m
 }
 
+var two = decimal.NewFromInt(2)
+
+func roundUp(v, tick decimal.Decimal) decimal.Decimal {
+	return v.Div(tick).Ceil().Mul(tick)
+}
+
+func roundDown(v, tick decimal.Decimal) decimal.Decimal {
+	return v.Div(tick).Floor().Mul(tick)
+}
+
+func (m *Monkey) calcOrderSize(
+	notional decimal.Decimal,
+	bbo decimal.Decimal,
+) decimal.Decimal {
+	size := roundUp(notional.Div(bbo), m.symbol.QuantityTickSize)
+	if size.LessThan(m.symbol.MinQuantity) {
+		return m.symbol.MinQuantity
+	}
+
+	return size
+}
+
+func (m *Monkey) withinTolerance(a, b decimal.Decimal) bool {
+	return a.Sub(b).Abs().LessThan(a.Mul(m.tolerance))
+}
+
 func (m *Monkey) See(e models.ExchangeMessage) {
-	pos := m.acc.GetPosition(symbol)
+	if e.Symbol != m.symbol.Symbol {
+		return
+	}
+
+	orders := m.acc.GetOrders(m.symbol.Symbol)
+
+	var bids, asks []models.Order
+	for _, o := range orders {
+		if o.Side == models.OrderSideBuy {
+			bids = append(bids, o)
+		} else {
+			asks = append(asks, o)
+		}
+	}
+
+	// Hack to prevent too many orders.
+	if len(orders) > 4 {
+		if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
+			log.Printf("failed to cancel all orders: %v\n", err)
+		} else {
+			bids = nil
+			asks = nil
+		}
+	}
+
 	switch e.MsgType {
 	case models.MsgTypeBBO:
 		bbo := e.Payload.(models.BBO)
-		if !m.prevAsk.Price.IsZero() {
-			if m.prevAsk.Price.GreaterThan(bbo.Ask.Price) {
-				m.cntUp++
-				log.Printf("^^^ %d\n", m.cntUp)
+		if bbo.Bid.Price.IsZero() && bbo.Ask.Price.IsZero() {
+			log.Println("no BBO")
+			return
+		}
 
-				// Closing short position if expected PnL > profitMargin.
-				profitMargin := bbo.Ask.Price.Mul(decimal.NewFromFloat(slippage))
-				if pos.Amount.IsNegative() &&
-					pos.EntryPrice.GreaterThan(bbo.Ask.Price.Add(profitMargin)) {
-					m.ch <- models.OrderSideBuy
-					m.prevAsk = bbo.Ask
-					return
-				}
-				if pos.Amount.IsPositive() {
-					// We are already in position.
-					m.prevAsk = bbo.Ask
-					return
-				}
+		midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(two)
+		if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
+			midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
+		}
 
-				if m.cntUp > patience {
-					// Opening long position if price is going up.
-					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideBuy
-					}
-					m.cntUp = 0
+		desiredBid := roundDown(midprice.Sub(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		desiredAsk := roundUp(midprice.Add(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+
+		// TODO: Makes sense to use batch commands.
+		// toCancel := make([]models.Order, 0, 2)
+		// toPlace := make([]models.Order, 0, 2)
+		hasDesired := false
+		for _, bid := range bids {
+			if !m.withinTolerance(bid.Price, desiredBid) {
+				_, err := m.acc.CancelOrder(context.Background(), bid)
+				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+					log.Printf("failed to cancel bid: %v\n", err)
 				}
-			} else if m.prevAsk.Price.LessThan(bbo.Ask.Price) {
-				m.cntUp = 0
+			} else {
+				hasDesired = true
 			}
 		}
 
-		m.prevAsk = bbo.Ask
-
-		// Closing long position if expected PnL > profitMargin.
-		if !m.prevBid.Price.IsZero() {
-			if m.prevBid.Price.LessThan(bbo.Bid.Price) {
-				m.cntDown++
-				log.Printf("vvv %d\n", m.cntDown)
-
-				profitMargin := bbo.Bid.Price.Mul(decimal.NewFromFloat(slippage))
-				if pos.Amount.IsPositive() &&
-					pos.EntryPrice.LessThan(bbo.Bid.Price.Sub(profitMargin)) {
-					m.ch <- models.OrderSideSell
-					m.prevBid = bbo.Bid
-					return
-				}
-				if pos.Amount.IsNegative() {
-					// We are already in position.
-					m.prevBid = bbo.Bid
-					return
-				}
-
-				if m.cntDown > patience {
-					// Opening short position if price is going up.
-					if atomic.AddUint32(&m.numEvents, 1) < 4 {
-						m.ch <- models.OrderSideSell
-					}
-					m.cntDown = 0
-				}
-			} else if m.prevBid.Price.GreaterThan(bbo.Bid.Price) {
-				m.cntDown = 0
+		if !hasDesired {
+			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+				Symbol:        m.symbol.Symbol,
+				Side:          models.OrderSideBuy,
+				Type:          models.OrderTypeLimit,
+				PostOnly:      true,
+				Price:         desiredBid,
+				Size:          m.calcOrderSize(m.orderNotional, bbo.Ask.Price),
+				ClientOrderID: uuid.NewString(),
+			})
+			if err != nil {
+				log.Printf("failed to place bid: %v\n", err)
 			}
 		}
 
-		m.prevBid = bbo.Bid
+		hasDesired = false
+		for _, ask := range asks {
+			if !m.withinTolerance(ask.Price, desiredAsk) {
+				_, err := m.acc.CancelOrder(context.Background(), ask)
+				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+					log.Printf("failed to cancel ask: %v\n", err)
+				}
+			} else {
+				hasDesired = true
+			}
+		}
+
+		if !hasDesired {
+			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+				Symbol:        m.symbol.Symbol,
+				Side:          models.OrderSideSell,
+				Type:          models.OrderTypeLimit,
+				PostOnly:      true,
+				Price:         desiredAsk,
+				Size:          m.calcOrderSize(m.orderNotional, bbo.Bid.Price),
+				ClientOrderID: uuid.NewString(),
+			})
+			if err != nil {
+				log.Printf("failed to place ask: %v\n", err)
+			}
+		}
 	}
-}
-
-func (m *Monkey) Say() <-chan models.OrderSide {
-	return m.ch
 }

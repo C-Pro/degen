@@ -1,4 +1,6 @@
 .env
 degen
 dumper
+run.sh
+*.log
 *.csv
