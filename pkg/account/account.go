@@ -27,6 +27,7 @@ type exchange interface {
 	SubscribeBookAggTrades(ctx context.Context, symbols []string) error
 	SubscribeUserOrders(ctx context.Context) error
 	SubscribeUserBalance(ctx context.Context) error
+	SubscribeUserTrades(ctx context.Context) error
 }
 
 type strategyCallback (func(upd models.ExchangeMessage))
@@ -121,6 +122,8 @@ func (a *Account) UpdateBalance(
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
+	metrics.RecordAssetBalance(a.exchange.Name(), asset, balance.InexactFloat64())
+
 	a.balances[asset] = models.Balance{
 		Total:     balance,
 		UpdatedAt: updatedAt,
@@ -130,16 +133,61 @@ func (a *Account) UpdateBalance(
 func (a *Account) UpdatePosition(
 	symbol string,
 	amount decimal.Decimal,
-	entryPrice decimal.Decimal,
+	price decimal.Decimal,
 	updatedAt time.Time,
 ) {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
+	// There are several cases to consider:
+	// 1. Adding to a long position (simple one).
+	// 2. Reducing position. Existing vwap is unchanged.
+	// 3. Adding to a short position. Same as 1, but work on absolute values.
+	// 4. Reducing position so it becomes zero.
+	// 5. Reducing position so much it opens a position in opposite direction.
+	// In this case new vwap is the price of the incoming trade.
+	// 6. New position (previous was zero).
+
+	oldPosition := a.positions[symbol]
+	newAmount := oldPosition.Amount.Add(amount)
+
+	if newAmount.IsZero() {
+		// Case 4. Reducing position so it becomes zero.
+		a.positions[symbol] = models.Position{
+			Amount:       decimal.Zero,
+			AveragePrice: decimal.Zero,
+			UpdatedAt:    updatedAt,
+		}
+		return
+	}
+
+	var vwap decimal.Decimal
+	switch {
+	case oldPosition.Amount.IsZero():
+		// Case 6. New position (previous was zero).
+		vwap = price
+	case oldPosition.Amount.Sign() == newAmount.Sign() &&
+		oldPosition.Amount.Abs().LessThan(newAmount.Abs()):
+		// Cases 1 and 3: increasing position.
+		vwap = oldPosition.AveragePrice.Mul(oldPosition.Amount.Abs()).
+			Add(price.Mul(amount.Abs())).
+			Div(newAmount.Abs())
+	case oldPosition.Amount.Sign() == newAmount.Sign() &&
+		oldPosition.Amount.Abs().GreaterThan(newAmount.Abs()):
+		// Case 2. Reducing position. Existing vwap is unchanged.
+		vwap = oldPosition.AveragePrice
+	case oldPosition.Amount.Sign() != newAmount.Sign():
+		// Case 5. Reducing position so much it opens a position
+		// in the opposite direction.
+		vwap = price
+	default:
+		panic("unaccounted for case")
+	}
+
 	a.positions[symbol] = models.Position{
-		Amount:     amount,
-		EntryPrice: entryPrice,
-		UpdatedAt:  updatedAt,
+		Amount:       newAmount,
+		AveragePrice: vwap,
+		UpdatedAt:    updatedAt,
 	}
 }
 
@@ -149,12 +197,10 @@ func orderKey(order models.Order) string {
 
 func (a *Account) UpdateOrder(order models.Order) {
 	key := orderKey(order)
-	log.Printf("update for order %s: %v", key, order)
 	existing, err := a.orders.Get(key)
 	if err == nil && existing.Status == models.OrderStatusNew {
 		log.Printf("Order time to book: %s\n", order.CreatedAt.Sub(existing.PlacedAt))
 		log.Printf("Order e2e time: %s\n", order.UpdatedAt.Sub(existing.PlacedAt))
-		log.Printf("%#v", order)
 		metrics.RecordPlaceOrderDuration(
 			a.exchange.Name(),
 			existing.PlacedAt,
@@ -203,7 +249,13 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 		if !ok {
 			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
 		}
-		a.UpdatePosition(upd.Symbol, pos.Amount, pos.EntryPrice, upd.Timestamp)
+		a.UpdatePosition(upd.Symbol, pos.Amount, pos.Price, upd.Timestamp)
+	case models.MsgTypeBBO:
+		bbo, ok := upd.Payload.(models.BBO)
+		if !ok {
+			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
+		}
+		metrics.RecordBBO(a.exchange.Name(), upd.Symbol, bbo)
 	}
 
 	return nil

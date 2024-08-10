@@ -13,7 +13,7 @@ const (
 	MsgTypeOrderStatus
 	MsgTypeBalanceUpdate
 	MsgTypePositionUpdate
-	MsgTypeTrade
+	MsgTypePublicTrade
 )
 
 type ExchangeMessage struct {
@@ -53,9 +53,10 @@ type BalanceUpdate struct {
 }
 
 type PositionUpdate struct {
-	Symbol     string
-	Amount     decimal.Decimal
-	EntryPrice decimal.Decimal
+	Symbol    string
+	Amount    decimal.Decimal
+	Price     decimal.Decimal
+	Timestamp time.Time
 }
 
 type Trade struct {

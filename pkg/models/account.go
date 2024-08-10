@@ -20,7 +20,7 @@ type Balance struct {
 
 type Position struct {
 	// Positive amount means long position, negative - short.
-	Amount     decimal.Decimal
-	EntryPrice decimal.Decimal
-	UpdatedAt  time.Time
+	Amount       decimal.Decimal
+	AveragePrice decimal.Decimal
+	UpdatedAt    time.Time
 }

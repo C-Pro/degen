@@ -53,7 +53,7 @@ func NewMonkey(
 		symbol:        s,
 		spread:        spread,
 		orderNotional: orderNotional,
-		tolerance:     spread.Mul(decimal.NewFromFloat(0.2)),
+		tolerance:     spread.Mul(decimal.NewFromFloat(0.3)),
 	}
 
 	return m
@@ -124,8 +124,19 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 			midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
 		}
 
+		position := m.acc.GetPosition(m.symbol.Symbol)
 		desiredBid := roundDown(midprice.Sub(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
 		desiredAsk := roundUp(midprice.Add(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		switch {
+		case position.Amount.Sign() == 1:
+			// We are long. Don't want to close at lower price.
+			avgPrice := position.AveragePrice
+			desiredAsk = roundUp(avgPrice.Add(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		case position.Amount.Sign() == -1:
+			// We are short. Don't want to close at larger price.
+			avgPrice := position.AveragePrice
+			desiredBid = roundDown(avgPrice.Sub(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		}
 
 		// TODO: Makes sense to use batch commands.
 		// toCancel := make([]models.Order, 0, 2)

@@ -410,9 +410,9 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Timestamp: timestampToTime(upd.Timestamp),
 						MsgType:   models.MsgTypePositionUpdate,
 						Payload: models.PositionUpdate{
-							Symbol:     strings.ToLower(p.Symbol),
-							Amount:     p.Amount,
-							EntryPrice: p.EntryPrice,
+							Symbol: strings.ToLower(p.Symbol),
+							Amount: p.Amount,
+							Price:  p.EntryPrice,
 						},
 					}
 				}
@@ -464,7 +464,7 @@ func (bts *Binance) Listen(ctx context.Context, ch chan<- models.ExchangeMessage
 						Exchange:  Name,
 						Symbol:    symbolFromExchange(trade.Symbol),
 						Timestamp: time.Now().UTC(),
-						MsgType:   models.MsgTypeTrade,
+						MsgType:   models.MsgTypePublicTrade,
 						Payload: models.Trade{
 							Price:     trade.Price,
 							Size:      trade.Quantity,

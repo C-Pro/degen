@@ -155,6 +155,18 @@ func (p *PintuPro) SubscribeUserBalance(ctx context.Context) error {
 	return nil
 }
 
+func (p *PintuPro) SubscribeUserTrades(ctx context.Context) error {
+	if p.key == "" {
+		return errors.New("SubscribeUserTrades: connection is not authenticated")
+	}
+
+	if err := p.subscribeStreams(ctx, []string{"user.trades"}); err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+
+	return nil
+}
+
 // easyjson:json
 type orderStatusMsg struct {
 	Status        string          `json:"status"`
@@ -191,6 +203,95 @@ type wsMessage struct {
 	Message   string          `json:"message"`
 	Reason    string          `json:"reason"`
 	Data      json.RawMessage `json:"data"`
+}
+
+/*
+{
+  "timestamp": 1672304484978,
+  "method": "subscription",
+  "channel": "user.trades.BTC-IDR",
+  "data": {
+    "trades": [
+      {
+      "trade_id": "fake-trade-id-2",
+      "order_id": "aaa-bbb-ccc-2",
+      "symbol": "BTC-IDR",
+      "side": "buy",
+      "price": "351000000",
+      "fee": "0.001",
+      "fee_asset": "BTC",
+      "fee_type": "maker",
+      "traded_size": "0.105",
+      "client_order_id": "xxx-yyy-zzz-2",
+      "traded_at": 1676869976772
+      },
+      ...
+      {
+      "trade_id": "fake-trade-id-1",
+      "order_id": "aaa-bbb-ccc-1",
+      "symbol": "BTC-IDR",
+      "side": "buy",
+      "price": "350000000",
+      "fee": "0.001",
+      "fee_asset": "BTC",
+      "fee_type": "maker",
+      "traded_size": "0.905",
+      "client_order_id": "xxx-yyy-zzz-1",
+      "traded_at": 1676869976760
+      }
+    ]
+  }
+}
+*/
+
+// easyjson:json
+type privateTradesMsg struct {
+	Trades []struct {
+		TradeID       string          `json:"trade_id"`
+		OrderID       string          `json:"order_id"`
+		ClientOrderID string          `json:"client_order_id"`
+		Symbol        string          `json:"symbol"`
+		Side          string          `json:"side"`
+		Price         decimal.Decimal `json:"price"`
+		Size          decimal.Decimal `json:"traded_size"`
+		Fee           decimal.Decimal `json:"fee"`
+		FeeAsset      string          `json:"fee_asset"`
+		TradedAt      int64           `json:"traded_at"`
+	} `json:"trades"`
+}
+
+func (p *PintuPro) handleUserTrades(msg wsMessage, ch chan<- models.ExchangeMessage) error {
+	var trades privateTradesMsg
+	if err := json.Unmarshal(msg.Data, &trades); err != nil {
+		return fmt.Errorf("failed to unmarshal user trades: %w", err)
+	}
+
+	for _, t := range trades.Trades {
+		side := models.OrderSideBuy
+		if t.Side == "SELL" {
+			side = models.OrderSideSell
+		}
+
+		amount := t.Size
+		if side == models.OrderSideSell {
+			amount = amount.Neg()
+		}
+
+		ch <- models.ExchangeMessage{
+			Exchange:  Name,
+			Symbol:    t.Symbol,
+			Timestamp: tsToTime(t.TradedAt),
+			MsgType:   models.MsgTypePositionUpdate,
+			Payload: models.PositionUpdate{
+				Symbol:    t.Symbol,
+				Amount:    amount,
+				Price:     t.Price,
+				Timestamp: tsToTime(t.TradedAt),
+			},
+		}
+	}
+
+	return nil
 }
 
 func (p *PintuPro) handleUserOrders(msg wsMessage, ch chan<- models.ExchangeMessage) error {
@@ -321,9 +422,7 @@ func (p *PintuPro) registerWSHandlers() {
 		"public/auth":           p.handleAuth,
 		"user.balance.snapshot": p.handleUserBalance,
 		"user.orders":           p.handleUserOrders,
-		// "user.orders.snapshot": p.handleUserOrdersSnapshot,
-		// "user.trades":        p.handleUserTrades,
-		// "user.trades.snapshot": p.handleUserTradesSnapshot,
+		"user.trades":           p.handleUserTrades,
 	}
 }
 
@@ -462,7 +561,7 @@ func (p *PintuPro) handlePublicTrades(msg wsMessage, ch chan<- models.ExchangeMe
 			Exchange:  Name,
 			Symbol:    trade.Symbol,
 			Timestamp: tsToTime(trade.Timestamp),
-			MsgType:   models.MsgTypeTrade,
+			MsgType:   models.MsgTypePublicTrade,
 			Payload: models.Trade{
 				Side:      side,
 				Timestamp: tsToTime(trade.Timestamp),
