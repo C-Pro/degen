@@ -39,9 +39,9 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 		},
 		Positions: map[string]models.Position{
 			"BTCUSDTPERP": {
-				Amount:     decimal.RequireFromString("0.01"),
-				EntryPrice: decimal.RequireFromString("50000.0"),
-				UpdatedAt:  time.Now(),
+				Amount:       decimal.RequireFromString("0.01"),
+				AveragePrice: decimal.RequireFromString("50000.0"),
+				UpdatedAt:    time.Now(),
 			},
 		},
 	}, nil

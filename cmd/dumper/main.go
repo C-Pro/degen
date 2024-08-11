@@ -182,7 +182,7 @@ func main() {
 			accs[key(msg.Symbol, "bid_size")].Observe(time.Now(), bbo.Bid.Size.InexactFloat64())
 			accs[key(msg.Symbol, "ask_size")].Observe(time.Now(), bbo.Ask.Size.InexactFloat64())
 			mux.Unlock()
-		case models.MsgTypeTrade:
+		case models.MsgTypePublicTrade:
 			trade := msg.Payload.(models.Trade)
 			mux.Lock()
 			if trade.Side == models.OrderSideBuy {

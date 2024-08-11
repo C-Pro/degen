@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"degen/pkg/metrics"
 	"degen/pkg/models"
 
 	"github.com/google/uuid"
@@ -64,6 +65,7 @@ func (api *API) call(
 	params any,
 	dest any,
 ) error {
+	defer metrics.RecordRequestDuration(Name, method, time.Now())
 	parts := strings.Split(method, "/")
 	if len(parts) != 2 {
 		return fmt.Errorf("pintupro.call: invalid method %q", method)

@@ -140,9 +140,9 @@ func (api *API) GetAccountInfo(ctx context.Context) (*models.AccountInfo, error)
 
 	for _, position := range respData.Positions {
 		accountInfo.Positions[position.Symbol] = models.Position{
-			Amount:     decimal.RequireFromString(position.PositionAmt),
-			EntryPrice: decimal.RequireFromString(position.EntryPrice),
-			UpdatedAt:  time.Unix(0, position.UpdatedAt*int64(time.Millisecond)),
+			Amount:       decimal.RequireFromString(position.PositionAmt),
+			AveragePrice: decimal.RequireFromString(position.EntryPrice),
+			UpdatedAt:    time.Unix(0, position.UpdatedAt*int64(time.Millisecond)),
 		}
 	}
 

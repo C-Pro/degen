@@ -84,7 +84,7 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 					Exchange:  Name,
 					Symbol:    parts[0],
 					Timestamp: time.Now().UTC(),
-					MsgType:   models.MsgTypeTrade,
+					MsgType:   models.MsgTypePublicTrade,
 					Payload: models.Trade{
 						Price:     decimal.NewFromFloat(rand.Float64() * 100),
 						Size:      decimal.NewFromFloat(rand.Float64() * 100),
@@ -129,9 +129,9 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 					Timestamp: time.Now().UTC(),
 					MsgType:   models.MsgTypePositionUpdate,
 					Payload: models.PositionUpdate{
-						Symbol:     "BTCUSDT",
-						Amount:     decimal.NewFromInt(1),
-						EntryPrice: decimal.NewFromInt(100),
+						Symbol: "BTCUSDT",
+						Amount: decimal.NewFromInt(1),
+						Price:  decimal.NewFromInt(100),
 					},
 				}
 			}

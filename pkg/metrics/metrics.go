@@ -12,7 +12,7 @@ var (
 	requestDurationHist = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "request_duration_seconds",
 		Help: "The duration of requests",
-	}, []string{"exchange", "method", "path"})
+	}, []string{"exchange", "path"})
 	placeOrderDurationHist = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "place_order_duration_seconds",
 		Help: "End to end duration of placing an order",
@@ -39,9 +39,9 @@ func init() {
 	prometheus.MustRegister(midpriceGague)
 }
 
-func RecordRequestDuration(exchange, method, path string, start time.Time) {
+func RecordRequestDuration(exchange, path string, start time.Time) {
 	duration := time.Since(start).Seconds()
-	requestDurationHist.WithLabelValues(exchange, method, path).Observe(duration)
+	requestDurationHist.WithLabelValues(exchange, path).Observe(duration)
 }
 
 func RecordPlaceOrderDuration(exchange string, start time.Time) {

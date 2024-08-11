@@ -124,7 +124,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Second):
+			case <-time.After(time.Minute):
 				b := acc.GetBalance(theAsset)
 				if b.UpdatedAt.After(lastChange) {
 					pnl := b.Total.Sub(initialBalance.Total)
