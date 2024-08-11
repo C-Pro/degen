@@ -1,0 +1,27 @@
+services:
+
+  degen:
+    image: degen
+    env_file:
+      - .env
+    logging:
+      options:
+       max-size: '1024kb'
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    logging:
+      options:
+       max-size: '100kb'
+
+  grafana:
+    image: grafana/grafana-oss
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/lib/grafana
+    logging:
+      options:
+       max-size: '100kb'
