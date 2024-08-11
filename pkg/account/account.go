@@ -19,6 +19,7 @@ type exchange interface {
 	Name() string
 	GetSymbols(ctx context.Context) (map[string]models.SymbolInfo, error)
 	GetAccountInfo(ctx context.Context) (*models.AccountInfo, error)
+	GetOrderDetails(ctx context.Context, order models.Order) (*models.Order, error)
 	PlaceOrder(ctx context.Context, order models.Order) (*models.Order, error)
 	CancelOrder(ctx context.Context, order models.Order) (*models.Order, error)
 	CancelAllOrders(ctx context.Context, symbol string) error
@@ -28,6 +29,7 @@ type exchange interface {
 	SubscribeUserOrders(ctx context.Context) error
 	SubscribeUserBalance(ctx context.Context) error
 	SubscribeUserTrades(ctx context.Context) error
+	RequestReconnect(reason string)
 }
 
 type strategyCallback (func(upd models.ExchangeMessage))
@@ -305,4 +307,31 @@ func (a *Account) GetOrder(symbol, clientOrderID string) *models.Order {
 func (a *Account) GetOrders(symbol string) []models.Order {
 	orders, _ := a.orders.ListByPrefix(symbol + ":")
 	return orders
+}
+
+func (a *Account) syncOrders(ctx context.Context, symbol string) error {
+	orders, _ := a.orders.ListByPrefix(symbol + ":")
+	for _, o := range orders {
+		order, err := a.exchange.GetOrderDetails(ctx, o)
+		if err != nil {
+			return fmt.Errorf("failed to get order details: %w", err)
+		}
+
+		a.UpdateOrder(*order)
+	}
+
+	return nil
+}
+
+func (a *Account) SyncWithExchange(ctx context.Context, symbols []string) error {
+	// Wait for some time for ws updates to come in.
+	time.Sleep(time.Second)
+
+	for _, symbol := range symbols {
+		if err := a.syncOrders(ctx, symbol); err != nil {
+			return fmt.Errorf("failed to sync orders: %w", err)
+		}
+	}
+	a.exchange.RequestReconnect("sync state")
+	return nil
 }

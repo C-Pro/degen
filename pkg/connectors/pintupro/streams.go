@@ -702,3 +702,7 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 		}
 	}
 }
+
+func (p *PintuPro) RequestReconnect(reason string) {
+	p.reconnectCh <- reason
+}

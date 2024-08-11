@@ -103,6 +103,9 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 
 	// Hack to prevent too many orders.
 	if len(orders) > 4 {
+		if err := m.acc.SyncWithExchange(context.Background(), []string{m.symbol.Symbol}); err != nil {
+			log.Printf("failed to sync with exchange: %v\n", err)
+		}
 		if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
 			log.Printf("failed to cancel all orders: %v\n", err)
 		} else {
