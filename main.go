@@ -128,9 +128,11 @@ func main() {
 				b := acc.GetBalance(theAsset)
 				if b.UpdatedAt.After(lastChange) {
 					pos := acc.GetPosition(theSymbol)
-					log.Printf("### Current notinal balance is %v; PnL is %v\n",
+					log.Printf("### Current notinal balance is %v; PnL is %v; Pos size: %s, avg. price: %s\n",
 						b.Total,
 						pos.RealizedPnL,
+						pos.Amount,
+						pos.AveragePrice,
 					)
 					lastChange = b.UpdatedAt
 				}

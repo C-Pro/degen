@@ -4,3 +4,4 @@ dumper
 run.sh
 *.log
 *.csv
+*.tar
