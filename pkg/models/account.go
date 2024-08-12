@@ -23,4 +23,9 @@ type Position struct {
 	Amount       decimal.Decimal
 	AveragePrice decimal.Decimal
 	UpdatedAt    time.Time
+	RealizedPnL  decimal.Decimal
+}
+
+func (p *Position) UnrealizedPnL(price decimal.Decimal) decimal.Decimal {
+	return p.Amount.Mul(price.Sub(p.AveragePrice))
 }

@@ -139,15 +139,22 @@ func (a *Account) UpdatePosition(
 	updatedAt time.Time,
 ) {
 	a.mux.Lock()
-	defer a.mux.Unlock()
+	defer func() {
+		metrics.RecordRealizedPnL(
+			a.exchange.Name(),
+			symbol,
+			a.positions[symbol].RealizedPnL.InexactFloat64(),
+		)
+		a.mux.Unlock()
+	}()
 
 	// There are several cases to consider:
 	// 1. Adding to a long position (simple one).
-	// 2. Reducing position. Existing vwap is unchanged.
+	// 2. Reducing position. Existing vwap is unchanged. PnL on the reduced size is realized.
 	// 3. Adding to a short position. Same as 1, but work on absolute values.
-	// 4. Reducing position so it becomes zero.
+	// 4. Reducing position so it becomes zero. Unrealized PnL is realized.
 	// 5. Reducing position so much it opens a position in opposite direction.
-	// In this case new vwap is the price of the incoming trade.
+	// In this case new vwap is the price of the incoming trade. PnL on the reduced size is realized.
 	// 6. New position (previous was zero).
 
 	oldPosition := a.positions[symbol]
@@ -159,11 +166,17 @@ func (a *Account) UpdatePosition(
 			Amount:       decimal.Zero,
 			AveragePrice: decimal.Zero,
 			UpdatedAt:    updatedAt,
+			RealizedPnL: oldPosition.RealizedPnL.Add(
+				oldPosition.UnrealizedPnL(price),
+			),
 		}
 		return
 	}
 
-	var vwap decimal.Decimal
+	var (
+		vwap decimal.Decimal
+		pnl  decimal.Decimal
+	)
 	switch {
 	case oldPosition.Amount.IsZero():
 		// Case 6. New position (previous was zero).
@@ -178,10 +191,12 @@ func (a *Account) UpdatePosition(
 		oldPosition.Amount.Abs().GreaterThan(newAmount.Abs()):
 		// Case 2. Reducing position. Existing vwap is unchanged.
 		vwap = oldPosition.AveragePrice
+		pnl = oldPosition.Amount.Sub(newAmount).Mul(price.Sub(oldPosition.AveragePrice))
 	case oldPosition.Amount.Sign() != newAmount.Sign():
 		// Case 5. Reducing position so much it opens a position
 		// in the opposite direction.
 		vwap = price
+		pnl = oldPosition.Amount.Mul(price.Sub(oldPosition.AveragePrice))
 	default:
 		panic("unaccounted for case")
 	}
@@ -190,6 +205,7 @@ func (a *Account) UpdatePosition(
 		Amount:       newAmount,
 		AveragePrice: vwap,
 		UpdatedAt:    updatedAt,
+		RealizedPnL:  oldPosition.RealizedPnL.Add(pnl),
 	}
 }
 
@@ -258,6 +274,18 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
 		}
 		metrics.RecordBBO(a.exchange.Name(), upd.Symbol, bbo)
+		position, ok := a.positions[upd.Symbol]
+		if ok && !position.Amount.IsZero() {
+			price := bbo.Ask.Price
+			if position.Amount.Sign() > 0 {
+				price = bbo.Bid.Price
+			}
+			metrics.RecordUnrealizedPnL(
+				a.exchange.Name(),
+				upd.Symbol,
+				position.UnrealizedPnL(price).InexactFloat64(),
+			)
+		}
 	}
 
 	return nil

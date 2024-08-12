@@ -61,6 +61,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.NewFromFloat(1),
 				AveragePrice: decimal.NewFromFloat(10000),
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(1000),
 			},
 		},
 		{
@@ -69,6 +70,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.NewFromFloat(1),
 				AveragePrice: decimal.NewFromFloat(10000),
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(1000),
 			},
 			symbol: "BTCUSD",
 			amount: decimal.NewFromFloat(-1),
@@ -77,6 +79,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.Zero,
 				AveragePrice: decimal.Zero,
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(2000),
 			},
 		},
 		{
@@ -93,6 +96,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.NewFromFloat(-1),
 				AveragePrice: decimal.NewFromFloat(9000),
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(-1000),
 			},
 		},
 		{
@@ -109,6 +113,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.NewFromFloat(1),
 				AveragePrice: decimal.NewFromFloat(11000),
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(-1000),
 			},
 		},
 		{
@@ -141,6 +146,7 @@ func TestUpdatePosition(t *testing.T) {
 				Amount:       decimal.NewFromFloat(-1),
 				AveragePrice: decimal.NewFromFloat(10000),
 				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(1000),
 			},
 		},
 	}
