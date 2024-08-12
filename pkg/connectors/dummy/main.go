@@ -7,7 +7,7 @@ import (
 const Name = "dummy"
 
 type Dummy struct {
-	API               *API
+	API
 	subscribedStreams []string
 }
 
@@ -16,7 +16,7 @@ func NewDummy(
 	key, secret, apiBaseURL, wsBaseURL string,
 ) *Dummy {
 	b := &Dummy{
-		API: NewAPI(key, secret, apiBaseURL),
+		API: *NewAPI(key, secret, apiBaseURL),
 	}
 
 	return b

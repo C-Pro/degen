@@ -139,3 +139,17 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 		}
 	}
 }
+
+func (d *Dummy) SubscribeUserBalance(ctx context.Context) error {
+	return nil
+}
+
+func (d *Dummy) SubscribeUserOrders(ctx context.Context) error {
+	return nil
+}
+
+func (d *Dummy) SubscribeUserTrades(ctx context.Context) error {
+	return nil
+}
+
+func (d *Dummy) RequestReconnect(reason string) {}
