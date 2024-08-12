@@ -37,6 +37,14 @@ var (
 		Name: "unrealized_pnl",
 		Help: "The unrealized PnL of a position",
 	}, []string{"exchange", "asset"})
+	positionSizeGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "position_size",
+		Help: "The size of a position",
+	}, []string{"exchange", "asset"})
+	positionAveragePriceGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "position_average_price",
+		Help: "The average price of a position",
+	}, []string{"exchange", "asset"})
 )
 
 func init() {
@@ -48,11 +56,15 @@ func init() {
 		midpriceGague,
 		realizedPnLGauge,
 		unrealizedPnLGauge,
+		positionSizeGauge,
+		positionAveragePriceGauge,
 	)
 }
 
-func RecordRealizedPnL(exchange, asset string, pnl float64) {
-	realizedPnLGauge.WithLabelValues(exchange, asset).Set(pnl)
+func RecordPosition(exchange, asset string, position models.Position) {
+	positionSizeGauge.WithLabelValues(exchange, asset).Set(position.Amount.InexactFloat64())
+	positionAveragePriceGauge.WithLabelValues(exchange, asset).Set(position.AveragePrice.InexactFloat64())
+	realizedPnLGauge.WithLabelValues(exchange, asset).Set(position.RealizedPnL.InexactFloat64())
 }
 
 func RecordUnrealizedPnL(exchange, asset string, pnl float64) {

@@ -140,11 +140,7 @@ func (a *Account) UpdatePosition(
 ) {
 	a.mux.Lock()
 	defer func() {
-		metrics.RecordRealizedPnL(
-			a.exchange.Name(),
-			symbol,
-			a.positions[symbol].RealizedPnL.InexactFloat64(),
-		)
+		metrics.RecordPosition(a.exchange.Name(), symbol, a.positions[symbol])
 		a.mux.Unlock()
 	}()
 
