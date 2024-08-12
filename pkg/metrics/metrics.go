@@ -29,14 +29,34 @@ var (
 		Name: "asset_midprice",
 		Help: "The midprice of an asset",
 	}, []string{"exchange", "asset"})
+	realizedPnLGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "realized_pnl",
+		Help: "The realized PnL of a position",
+	}, []string{"exchange", "asset"})
+	unrealizedPnLGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "unrealized_pnl",
+		Help: "The unrealized PnL of a position",
+	}, []string{"exchange", "asset"})
 )
 
 func init() {
-	prometheus.MustRegister(requestDurationHist)
-	prometheus.MustRegister(placeOrderDurationHist)
-	prometheus.MustRegister(assetBalanceGauge)
-	prometheus.MustRegister(spreadGauge)
-	prometheus.MustRegister(midpriceGague)
+	prometheus.MustRegister(
+		requestDurationHist,
+		placeOrderDurationHist,
+		assetBalanceGauge,
+		spreadGauge,
+		midpriceGague,
+		realizedPnLGauge,
+		unrealizedPnLGauge,
+	)
+}
+
+func RecordRealizedPnL(exchange, asset string, pnl float64) {
+	realizedPnLGauge.WithLabelValues(exchange, asset).Set(pnl)
+}
+
+func RecordUnrealizedPnL(exchange, asset string, pnl float64) {
+	unrealizedPnLGauge.WithLabelValues(exchange, asset).Set(pnl)
 }
 
 func RecordRequestDuration(exchange, path string, start time.Time) {
