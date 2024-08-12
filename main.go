@@ -127,8 +127,11 @@ func main() {
 			case <-time.After(time.Minute):
 				b := acc.GetBalance(theAsset)
 				if b.UpdatedAt.After(lastChange) {
-					pnl := b.Total.Sub(initialBalance.Total)
-					log.Printf("### Current balance is %v; PNL is %v", b.Total, pnl)
+					pos := acc.GetPosition(theSymbol)
+					log.Printf("### Current notinal balance is %v; PnL is %v\n",
+						b.Total,
+						pos.RealizedPnL,
+					)
 					lastChange = b.UpdatedAt
 				}
 			}
