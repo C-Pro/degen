@@ -37,6 +37,8 @@ func (ws *WS) Connect(ctx context.Context, url string) error {
 
 	ws.conn = conn
 	ws.connCtx, ws.connCancel = context.WithCancel(ctx)
+	// log.Printf("Connected to %s", url)
+
 	return nil
 }
 

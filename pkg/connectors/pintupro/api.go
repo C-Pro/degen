@@ -185,6 +185,56 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 	return &result, nil
 }
 
+func (a *API) GetQuote(ctx context.Context, symbol string) (models.BBO, error) {
+	var ob orderBookMsg
+	resp := responseMessage{
+		Data: &ob,
+	}
+	if err := a.call("public/get-book", url.Values{"symbol": {symbol}, "depth": {"1"}}, &resp); err != nil {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: unexpected code %d %s %s", resp.Code, resp.Message, resp.Reason)
+	}
+
+	if len(ob.Asks) == 0 || len(ob.Bids) == 0 {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: empty order book")
+	}
+
+	askPrice, err := decimal.NewFromString(ob.Asks[0][0])
+	if err != nil {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: %w", err)
+	}
+
+	askSize, err := decimal.NewFromString(ob.Asks[0][1])
+	if err != nil {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: %w", err)
+	}
+
+	bidPrice, err := decimal.NewFromString(ob.Bids[0][0])
+	if err != nil {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: %w", err)
+	}
+
+	bidSize, err := decimal.NewFromString(ob.Bids[0][1])
+	if err != nil {
+		return models.BBO{}, fmt.Errorf("pintupro.GetQuote: %w", err)
+	}
+
+	return models.BBO{
+		Ask: models.PriceLevel{
+			Price: askPrice,
+			Size:  askSize,
+		},
+		Bid: models.PriceLevel{
+			Price: bidPrice,
+			Size:  bidSize,
+		},
+		Timestamp: tsToTime(resp.Timestamp),
+	}, nil
+}
+
 // easyjson:json
 type symbolsReferenceResponse struct {
 	Symbols []struct {

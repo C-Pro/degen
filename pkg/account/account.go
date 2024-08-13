@@ -69,8 +69,13 @@ func (a *Account) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to get initial account info: %w", err)
 	}
 
-	a.balances = info.Balances
-	a.positions = info.Positions
+	for k, v := range info.Balances {
+		a.balances[k] = v
+	}
+
+	for k, v := range info.Positions {
+		a.positions[k] = v
+	}
 
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	ch := make(chan models.ExchangeMessage, 100)
@@ -166,6 +171,7 @@ func (a *Account) UpdatePosition(
 				oldPosition.UnrealizedPnL(price),
 			),
 		}
+		log.Printf("Position %s closed at %s; PnL: %s\n", symbol, price, oldPosition.UnrealizedPnL(price))
 		return
 	}
 
@@ -196,6 +202,8 @@ func (a *Account) UpdatePosition(
 	default:
 		panic("unaccounted for case")
 	}
+
+	log.Printf("Position %s updated: %s -> %s; PnL: %s\n", symbol, oldPosition.Amount, newAmount, pnl)
 
 	a.positions[symbol] = models.Position{
 		Amount:       newAmount,
@@ -270,7 +278,9 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
 		}
 		metrics.RecordBBO(a.exchange.Name(), upd.Symbol, bbo)
+		a.mux.RLock()
 		position, ok := a.positions[upd.Symbol]
+		a.mux.RUnlock()
 		if ok && !position.Amount.IsZero() {
 			price := bbo.Ask.Price
 			if position.Amount.Sign() > 0 {

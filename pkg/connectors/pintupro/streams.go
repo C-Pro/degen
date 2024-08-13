@@ -272,10 +272,12 @@ func (p *PintuPro) handleUserTrades(msg wsMessage, ch chan<- models.ExchangeMess
 			side = models.OrderSideSell
 		}
 
-		amount := t.Size
-		if side == models.OrderSideSell {
-			amount = amount.Neg()
+		amount := t.Size.Neg()
+		if side == models.OrderSideBuy {
+			amount = t.Size.Sub(t.Fee)
 		}
+
+		log.Printf("trade %s %s %s at %s", t.Side, t.Size, t.Symbol, t.Price)
 
 		ch <- models.ExchangeMessage{
 			Exchange:  Name,

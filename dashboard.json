@@ -25,7 +25,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -109,7 +109,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "sum(asset_balance{asset=\"ETH\"}) * sum(asset_midprice{asset=\"ETH-IDR\"}) + sum(asset_balance{asset=\"IDR\"})",
+                    "expr": "sum(asset_balance{asset=\"ETH\"}) * sum(asset_midprice{asset=\"ETH-IDR\"}) + sum(asset_balance{asset=\"IDR\"}) ",
                     "instant": false,
                     "legendFormat": "__auto",
                     "range": true,
@@ -122,7 +122,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -205,7 +205,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "asset_balance{asset=\"IDR\"} ",
+                    "expr": "asset_balance{asset=\"IDR\"}",
                     "instant": false,
                     "legendFormat": "{{asset}}",
                     "range": true,
@@ -218,7 +218,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -301,7 +301,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "asset_balance{asset=\"ETH\"} ",
+                    "expr": "asset_balance{asset=\"ETH\"}",
                     "instant": false,
                     "legendFormat": "{{asset}}",
                     "range": true,
@@ -314,7 +314,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -397,7 +397,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "asset_midprice{asset=\"ETH-IDR\"} ",
+                    "expr": "asset_midprice{asset=\"ETH-IDR\"}",
                     "instant": false,
                     "legendFormat": "__auto",
                     "range": true,
@@ -410,7 +410,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -498,7 +498,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "rate(request_duration_seconds_sum[$__rate_interval])/rate(request_duration_seconds_count[$__rate_interval])",
+                    "expr": "rate(request_duration_seconds_sum[$__rate_interval])/rate(request_duration_seconds_count[$__rate_interval]) ",
                     "instant": false,
                     "legendFormat": "__auto",
                     "range": true,
@@ -511,7 +511,7 @@
         {
             "datasource": {
                 "type": "prometheus",
-                "uid": "ddrmd4fjbsxkwa"
+                "uid": "edtw4hgzvho8wd"
             },
             "fieldConfig": {
                 "defaults": {
@@ -599,7 +599,7 @@
                         "uid": "ef5d2e62-7cfa-44a1-8357-cb7b1a17965f"
                     },
                     "editorMode": "code",
-                    "expr": "rate(place_order_duration_seconds_sum[$__rate_interval]) / rate(place_order_duration_seconds_count[$__rate_interval])",
+                    "expr": "rate(place_order_duration_seconds_sum[$__rate_interval]) / rate(place_order_duration_seconds_count[$__rate_interval]) ",
                     "instant": false,
                     "legendFormat": "P95",
                     "range": true,
@@ -607,6 +607,297 @@
                 }
             ],
             "title": "Avg place order duration",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "edtw4hgzvho8wd"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "smooth",
+                        "lineStyle": {
+                            "dash": [
+                                10,
+                                10
+                            ],
+                            "fill": "dash"
+                        },
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line+area"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "green",
+                                "value": 1
+                            }
+                        ]
+                    },
+                    "unit": "currencyIDR"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 16
+            },
+            "id": 10,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": false
+                },
+                "tooltip": {
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "edtw4hgzvho8wd"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(unrealized_pnl) by (asset)",
+                    "instant": false,
+                    "legendFormat": "__auto",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Unrealized PnL",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "edtw4hgzvho8wd"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "auto",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "currencyIDR"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 16
+            },
+            "id": 9,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": false
+                },
+                "tooltip": {
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "edtw4hgzvho8wd"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(realized_pnl) by (asset)",
+                    "instant": false,
+                    "legendFormat": "__auto",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Realized PnL",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "edtw4hgzvho8wd"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisBorderShow": false,
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 0,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "legend": false,
+                            "tooltip": false,
+                            "viz": false
+                        },
+                        "insertNulls": false,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "auto",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "red",
+                                "value": 80
+                            }
+                        ]
+                    }
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 24
+            },
+            "id": 8,
+            "options": {
+                "legend": {
+                    "calcs": [],
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "single",
+                    "sort": "none"
+                }
+            },
+            "pluginVersion": "11.1.3",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "edtw4hgzvho8wd"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(position_average_price) by (asset)",
+                    "instant": false,
+                    "legendFormat": "__auto",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Position Average Price",
             "type": "timeseries"
         }
     ],
@@ -617,14 +908,13 @@
         "list": []
     },
     "time": {
-        "from": "now-30m",
+        "from": "now-15m",
         "to": "now"
     },
-    "timeRangeUpdatedDuringEditOrView": false,
     "timepicker": {},
     "timezone": "",
     "title": "Degen ETH",
     "uid": "c1eebd51-c009-4ca8-9a98-86c3a692d623",
-    "version": 4,
+    "version": 3,
     "weekStart": ""
 }

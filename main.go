@@ -57,6 +57,16 @@ func main() {
 		}
 	}
 
+	var avgPrice decimal.Decimal
+	if os.Getenv("AVG_PRICE") != "" {
+		var err error
+		avgPrice, err = decimal.NewFromString(os.Getenv("AVG_PRICE"))
+		if err != nil {
+			log.Printf("failed to parse AVG_PRICE: %v\n", err)
+			return
+		}
+	}
+
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
 		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
@@ -78,6 +88,17 @@ func main() {
 
 	if ptu == nil {
 		return
+	}
+
+	// If no average price for the position is provided, use current sell price.
+	if avgPrice.IsZero() {
+		bbo, err := ptu.GetQuote(ctx, theSymbol)
+		if err != nil {
+			log.Printf("failed to get quote: %v\n", err)
+			return
+		}
+
+		avgPrice = bbo.Ask.Price
 	}
 
 	acc := account.NewAccount("pintu", ptu)
@@ -103,6 +124,24 @@ func main() {
 		initialBalance.Available.String(),
 	)
 
+	// Treat base asset balance as a position (for SPOT).
+	symbols, err := acc.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return
+	}
+	bal := acc.GetBalance(symbols[theSymbol].Base)
+	acc.UpdatePosition(theSymbol, bal.Total, avgPrice, bal.UpdatedAt)
+
+	initialPostion := acc.GetPosition(theSymbol)
+	log.Printf(
+		`Initial position:
+	Amount: %s
+	Average price: %s
+`, initialPostion.Amount.String(),
+		initialPostion.AveragePrice.String(),
+	)
+
 	if err := acc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
 		log.Printf("failed to subscribe tiker: %v\n", err)
 		return
@@ -115,6 +154,11 @@ func main() {
 
 	if err := acc.SubscribeUserOrders(ctx); err != nil {
 		log.Printf("failed to subscribe orders: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserTrades(ctx); err != nil {
+		log.Printf("failed to subscribe trades: %v\n", err)
 		return
 	}
 
