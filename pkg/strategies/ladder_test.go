@@ -61,6 +61,68 @@ func TestPositionAddAvgPrice(t *testing.T) {
 			expTotalSize: 0,
 			expLong:      true,
 		},
+		{
+			name: "add multiple trades long",
+			trades: [][2]float64{
+				{100, 1},
+				{101, 1},
+				{102, 1},
+			},
+			expAvgPrice:  101,
+			expTotalSize: 3,
+			expLong:      true,
+		},
+		{
+			name: "add multiple trades short",
+			trades: [][2]float64{
+				{100, -1},
+				{101, -1},
+				{102, -1},
+			},
+			expAvgPrice:  101,
+			expTotalSize: -3,
+			expLong:      false,
+		},
+		{
+			name: "reduce long position partially",
+			trades: [][2]float64{
+				{100, 2},
+				{101, -1},
+			},
+			expAvgPrice:  100,
+			expTotalSize: 1,
+			expLong:      true,
+		},
+		{
+			name: "reduce short position partially",
+			trades: [][2]float64{
+				{100, -2},
+				{101, 1},
+			},
+			expAvgPrice:  100,
+			expTotalSize: -1,
+			expLong:      false,
+		},
+		{
+			name: "flip position from long to short",
+			trades: [][2]float64{
+				{100, 1},
+				{101, -2},
+			},
+			expAvgPrice:  101,
+			expTotalSize: -1,
+			expLong:      false,
+		},
+		{
+			name: "flip position from short to long",
+			trades: [][2]float64{
+				{100, -1},
+				{101, 2},
+			},
+			expAvgPrice:  101,
+			expTotalSize: 1,
+			expLong:      true,
+		},
 	}
 
 	for _, tc := range cases {

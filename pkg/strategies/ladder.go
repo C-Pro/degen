@@ -3,6 +3,7 @@ package strategies
 import (
 	"context"
 	"log"
+	"math"
 	"strings"
 
 	"degen/pkg/account"
@@ -45,7 +46,7 @@ func (p *positionStructure) add(price float64, size float64) {
 	} else {
 		// If position side is opposite to the incoming trade, position should be reduced.
 		if p.long != (size > 0) {
-			p.reduce(price, -size)
+			p.reduce(price, size)
 			return
 		}
 	}
@@ -74,7 +75,7 @@ func (p *positionStructure) add(price float64, size float64) {
 		default:
 			prev := float64(0)
 			curr := p.head
-			for !p.less(curr, price) {
+			for !p.less(price, curr) {
 				prev = curr
 				curr = p.sizes[curr].next
 				if curr == 0 {
@@ -111,10 +112,14 @@ func (p *positionStructure) reduce(price float64, size float64) {
 		panic("reducing empty position")
 	}
 
-	for curr := p.head; curr != 0 && size != 0; curr = p.sizes[curr].next {
+	// Size here will have the opposite sign to the size of the position.
+	var next float64
+	for curr := p.head; curr != 0 && size != 0; curr = next {
 		e := p.sizes[curr]
-		if e.size <= size {
-			size -= e.size
+		next = e.next
+		// If the entry is smaller than the size, remove it.
+		if math.Abs(e.size) <= math.Abs(size) {
+			size += e.size // decreasing absolute value of size.
 			delete(p.sizes, curr)
 			switch {
 			case p.totalSize-e.size == 0:
@@ -130,11 +135,12 @@ func (p *positionStructure) reduce(price float64, size float64) {
 				prevEntry.next = e.next
 				p.sizes[e.prev] = prevEntry
 			}
-		} else {
-			p.avgPrice = (p.avgPrice*p.totalSize - curr*size) / (p.totalSize - size)
-			p.totalSize -= size
-			e.size -= size
+		} else { // If the entry is larger than the size, reduce it.
+			p.avgPrice = (p.avgPrice*p.totalSize + curr*size) / (p.totalSize + size)
+			p.totalSize += size
+			e.size += size
 			p.sizes[curr] = e
+			size = 0
 			break
 		}
 	}
@@ -142,6 +148,7 @@ func (p *positionStructure) reduce(price float64, size float64) {
 	// If there is still size left, open a new position in
 	// the opposite direction.
 	if size != 0 {
+		p.long = !p.long
 		p.add(price, size)
 	}
 }
