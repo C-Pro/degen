@@ -153,6 +153,50 @@ func (p *positionStructure) reduce(price float64, size float64) {
 	}
 }
 
+// getReduceSize returns the size that position can be reduced by
+// given the expected execution price.
+func (p *positionStructure) getReduceSize(price float64) float64 {
+	if p.sizes == nil {
+		return 0
+	}
+
+	size := 0.0
+	for curr := p.head; curr != 0; curr = p.sizes[curr].next {
+		if p.less(curr, price) {
+			size += p.sizes[curr].size
+			continue
+		}
+		break
+	}
+
+	return size
+}
+
+// getMinReducePrice returns the minimum price at which the position
+// can be reduced by up to the given size.
+func (p *positionStructure) getMinReducePrice(reqSize float64) (price, size float64) {
+	if p.sizes == nil {
+		return 0, 0
+	}
+
+	sizePrice := 0.0
+	for curr := p.head; curr != 0 && reqSize != 0; curr = p.sizes[curr].next {
+		reduceSize := math.Min(math.Abs(reqSize), math.Abs(p.sizes[curr].size))
+		if p.long {
+			reduceSize = -reduceSize
+		}
+		sizePrice += math.Abs(curr * reduceSize)
+		reqSize -= math.Abs(reduceSize)
+		size += math.Abs(reduceSize)
+	}
+
+	if size == 0 {
+		return 0, 0
+	}
+
+	return sizePrice / size, size
+}
+
 // Ladder is a market maker that follows
 // the current midprice and places orders with defined spread.
 type Ladder struct {
@@ -161,6 +205,7 @@ type Ladder struct {
 	acc           *account.Account
 	spread        decimal.Decimal
 	tolerance     decimal.Decimal
+	ps            *positionStructure
 }
 
 func NewLadder(
@@ -195,6 +240,7 @@ func NewLadder(
 		spread:        spread,
 		orderNotional: orderNotional,
 		tolerance:     spread.Mul(decimal.NewFromFloat(0.3)),
+		ps:            &positionStructure{},
 	}
 
 	return m
