@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math"
 	"strings"
@@ -195,6 +196,120 @@ func (p *positionStructure) getMinReducePrice(reqSize float64) (price, size floa
 	}
 
 	return sizePrice / size, size
+}
+
+// openInterest holds information about currently open oders.
+type openInterest struct {
+	bids         map[string]models.Order
+	asks         map[string]models.Order
+	totalBidSize decimal.Decimal
+	totalAskSize decimal.Decimal
+}
+
+func newOpenInterest() *openInterest {
+	return &openInterest{
+		bids: make(map[string]models.Order),
+		asks: make(map[string]models.Order),
+	}
+}
+
+func (oi *openInterest) observe(o models.Order) error {
+	switch o.Side {
+	case models.OrderSideBuy:
+		old, ok := oi.bids[o.ClientOrderID]
+		oi.bids[o.ClientOrderID] = o
+		switch o.Status {
+		case models.OrderStatusPlaced:
+			oi.totalBidSize = oi.totalBidSize.Add(o.Size)
+		case models.OrderStatusCanceled:
+			cancelledSize := o.Size.Sub(o.FilledSize)
+			oi.totalBidSize = oi.totalBidSize.Sub(cancelledSize)
+		case models.OrderStatusPartiallyFilled, models.OrderStatusFilled:
+			if ok {
+				filledSize := o.FilledSize.Sub(old.FilledSize)
+				oi.totalBidSize = oi.totalBidSize.Sub(filledSize)
+			} else {
+				openSize := o.Size.Sub(o.FilledSize)
+				oi.totalBidSize = oi.totalBidSize.Add(openSize)
+			}
+		}
+
+		if oi.totalBidSize.LessThanOrEqual(decimal.Zero) {
+			return fmt.Errorf("negative total bid size after observing order %s", o.ClientOrderID)
+		}
+
+	case models.OrderSideSell:
+		old, ok := oi.asks[o.ClientOrderID]
+		oi.asks[o.ClientOrderID] = o
+		switch o.Status {
+		case models.OrderStatusPlaced:
+			oi.totalAskSize = oi.totalAskSize.Add(o.Size)
+		case models.OrderStatusCanceled:
+			cancelledSize := o.Size.Sub(o.FilledSize)
+			oi.totalAskSize = oi.totalAskSize.Sub(cancelledSize)
+		case models.OrderStatusPartiallyFilled, models.OrderStatusFilled:
+			if ok {
+				filledSize := o.FilledSize.Sub(old.FilledSize)
+				oi.totalAskSize = oi.totalAskSize.Sub(filledSize)
+			} else {
+				openSize := o.Size.Sub(o.FilledSize)
+				oi.totalAskSize = oi.totalAskSize.Add(openSize)
+			}
+		}
+
+		if oi.totalAskSize.LessThanOrEqual(decimal.Zero) {
+			return fmt.Errorf("negative total ask size after observing order %s", o.ClientOrderID)
+		}
+	}
+
+	return nil
+}
+
+// cap spread penalty at 5%
+const spreadPenaltyClamp = 0.05
+
+// bidSpreadPenalty returns extra spread that should be added to the bid side
+// midprice deviation if total bid size is higher than total ask size.
+// The goal is to keep bid and ask sizes balanced.
+func (oi *openInterest) bidSpreadPenalty() decimal.Decimal {
+	if oi.totalBidSize.IsZero() {
+		return decimal.Zero
+	}
+
+	// Will add 0.05% to the spread for each 1% of bid-heavy imbalance.
+	imbalance := oi.totalBidSize.Sub(oi.totalAskSize).Div(oi.totalBidSize)
+	if imbalance.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero
+	}
+
+	penalty := imbalance.Mul(decimal.NewFromFloat(0.05))
+	if penalty.GreaterThan(decimal.NewFromFloat(spreadPenaltyClamp)) {
+		return decimal.NewFromFloat(spreadPenaltyClamp)
+	}
+
+	return penalty
+}
+
+// askSpreadPenalty returns extra spread that should be added to the ask side
+// midprice deviation if total ask size is higher than total bid size.
+// The goal is to keep bid and ask sizes balanced.
+func (oi *openInterest) askSpreadPenalty() decimal.Decimal {
+	if oi.totalAskSize.IsZero() {
+		return decimal.Zero
+	}
+
+	// Will add 0.05% to the spread for each 1% of ask-heavy imbalance.
+	imbalance := oi.totalAskSize.Sub(oi.totalBidSize).Div(oi.totalAskSize)
+	if imbalance.LessThanOrEqual(decimal.Zero) {
+		return decimal.Zero
+	}
+
+	penalty := imbalance.Mul(decimal.NewFromFloat(0.05))
+	if penalty.GreaterThan(decimal.NewFromFloat(spreadPenaltyClamp)) {
+		return decimal.NewFromFloat(spreadPenaltyClamp)
+	}
+
+	return penalty
 }
 
 // Ladder is a market maker that follows

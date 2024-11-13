@@ -4,6 +4,10 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"degen/pkg/models"
+
+	"github.com/shopspring/decimal"
 )
 
 func TestPositionAddAvgPrice(t *testing.T) {
@@ -154,37 +158,37 @@ func TestPositionAddAvgPrice(t *testing.T) {
 }
 
 func TestGetMinReducePrice(t *testing.T) {
-	cases := []struct{
-		name         string
-		trades       [][2]float64
-		reduceSize   float64
+	cases := []struct {
+		name           string
+		trades         [][2]float64
+		reduceSize     float64
 		expReducePrice float64
-		expReduceSize float64
+		expReduceSize  float64
 	}{
 		{
-			name: "empty position",
-			trades: [][2]float64{},
-			reduceSize: 1,
+			name:           "empty position",
+			trades:         [][2]float64{},
+			reduceSize:     1,
 			expReducePrice: 0,
-			expReduceSize: 0,
+			expReduceSize:  0,
 		},
 		{
 			name: "reduce long position 1 (partial)",
 			trades: [][2]float64{
 				{100, 1},
 			},
-			reduceSize: 0.5,
+			reduceSize:     0.5,
 			expReducePrice: 100,
-			expReduceSize: 0.5,
+			expReduceSize:  0.5,
 		},
 		{
 			name: "reduce long position 1 (full)",
 			trades: [][2]float64{
 				{100, 1},
 			},
-			reduceSize: 1,
+			reduceSize:     1,
 			expReducePrice: 100,
-			expReduceSize: 1,
+			expReduceSize:  1,
 		},
 		{
 			name: "reduce long position 2 (partial)",
@@ -192,9 +196,9 @@ func TestGetMinReducePrice(t *testing.T) {
 				{100, 1},
 				{101, 1},
 			},
-			reduceSize: 1.5,
+			reduceSize:     1.5,
 			expReducePrice: 100.33333333333333,
-			expReduceSize: 1.5,
+			expReduceSize:  1.5,
 		},
 		{
 			name: "reduce long position 2 (full, not enough)",
@@ -202,27 +206,27 @@ func TestGetMinReducePrice(t *testing.T) {
 				{100, 1},
 				{101, 1},
 			},
-			reduceSize: 3,
+			reduceSize:     3,
 			expReducePrice: 100.5,
-			expReduceSize: 2,
+			expReduceSize:  2,
 		},
 		{
 			name: "reduce short position 1 (partial)",
 			trades: [][2]float64{
 				{100, -1},
 			},
-			reduceSize: 0.5,
+			reduceSize:     0.5,
 			expReducePrice: 100,
-			expReduceSize: 0.5,
+			expReduceSize:  0.5,
 		},
 		{
 			name: "reduce short position 1 (full)",
 			trades: [][2]float64{
 				{100, -1},
 			},
-			reduceSize: 1,
+			reduceSize:     1,
 			expReducePrice: 100,
-			expReduceSize: 1,
+			expReduceSize:  1,
 		},
 		{
 			name: "reduce short position 2 (partial)",
@@ -230,9 +234,9 @@ func TestGetMinReducePrice(t *testing.T) {
 				{100, -1},
 				{101, -1},
 			},
-			reduceSize: 1.5,
+			reduceSize:     1.5,
 			expReducePrice: 100.66666666666667,
-			expReduceSize: 1.5,
+			expReduceSize:  1.5,
 		},
 		{
 			name: "reduce short position 2 (full, not enough)",
@@ -240,9 +244,9 @@ func TestGetMinReducePrice(t *testing.T) {
 				{100, -1},
 				{101, -1},
 			},
-			reduceSize: 3,
+			reduceSize:     3,
 			expReducePrice: 100.5,
-			expReduceSize: 2,
+			expReduceSize:  2,
 		},
 	}
 
@@ -299,5 +303,509 @@ func TestPositionAddFuzz(t *testing.T) {
 		if eq(totalSize, p.getReduceSize(reducePrice)) {
 			t.Errorf("%05d: expected total internal size %v, got %v", i, totalSize, p.getReduceSize(reducePrice))
 		}
+	}
+}
+
+func TestOpenInterest(t *testing.T) {
+	cases := []struct {
+		name     string
+		orders   []models.Order
+		expBidOI decimal.Decimal
+		expAskOI decimal.Decimal
+	}{
+		{
+			name:     "empty orders",
+			orders:   []models.Order{},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "one bid order",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+			},
+			expBidOI: decimal.NewFromFloat(1),
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "one ask order",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.NewFromFloat(1),
+		},
+		{
+			name: "multiple orders",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+				{
+					Price:         decimal.NewFromFloat(102),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "3",
+				},
+				{
+					Price:         decimal.NewFromFloat(103),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "4",
+				},
+			},
+			expBidOI: decimal.NewFromFloat(2),
+			expAskOI: decimal.NewFromFloat(2),
+		},
+		{
+			name: "multiple orders with cancel",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusCanceled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusCanceled,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "multiple orders with fill",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusFilled,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "market immediately filled",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(1),
+					Status:        models.OrderStatusFilled,
+					Side:          models.OrderSideSell,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "market immediately filled with partial fill",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPartiallyFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Status:        models.OrderStatusPartiallyFilled,
+					Side:          models.OrderSideSell,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.NewFromFloat(0.5),
+			expAskOI: decimal.NewFromFloat(0.5),
+		},
+		{
+			name: "place then partially fill",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPartiallyFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Status:        models.OrderStatusPartiallyFilled,
+					Side:          models.OrderSideSell,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.NewFromFloat(0.5),
+			expAskOI: decimal.NewFromFloat(0.5),
+		},
+		{
+			name: "partially fill then cancel",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPartiallyFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.5),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusCanceled,
+					ClientOrderID: "1",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "multiple partial fills",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.3),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPartiallyFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(0.7),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPartiallyFilled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					FilledSize:    decimal.NewFromFloat(1.0),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusFilled,
+					ClientOrderID: "1",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+		{
+			name: "cancel multiple orders",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusCanceled,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusCanceled,
+					ClientOrderID: "2",
+				},
+			},
+			expBidOI: decimal.Zero,
+			expAskOI: decimal.Zero,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oi := newOpenInterest()
+
+			for _, order := range tc.orders {
+				oi.observe(order)
+			}
+
+			if !oi.totalBidSize.Equal(tc.expBidOI) {
+				t.Errorf("expected bidOI %s, got %s", tc.expBidOI, oi.totalBidSize)
+			}
+
+			if !oi.totalAskSize.Equal(tc.expAskOI) {
+				t.Errorf("expected askOI %s, got %s", tc.expAskOI, oi.totalAskSize)
+			}
+		})
+	}
+}
+
+func TestSpreadPenalty(t *testing.T) {
+	eq := func(a, b decimal.Decimal) bool {
+		return a.Sub(b).Abs().LessThan(decimal.NewFromFloat(0.0001))
+	}
+	cases := []struct {
+		name          string
+		orders        []models.Order
+		expBidPenalty decimal.Decimal
+		expAskPenalty decimal.Decimal
+	}{
+		{
+			name:          "empty orders",
+			orders:        []models.Order{},
+			expBidPenalty: decimal.Zero,
+			expAskPenalty: decimal.Zero,
+		},
+		{
+			name: "1% bid heavy imbalance",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(101),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(100),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+			},
+			expBidPenalty: decimal.NewFromFloat(0.0005),
+			expAskPenalty: decimal.Zero,
+		},
+		{
+			name: "1% ask heavy imbalance",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(100),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(101),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+			},
+			expBidPenalty: decimal.Zero,
+			expAskPenalty: decimal.NewFromFloat(0.0005),
+		},
+		{
+			name: "balanced orders",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+			},
+			expBidPenalty: decimal.Zero,
+			expAskPenalty: decimal.Zero,
+		},
+		{
+			name: "2% bid heavy imbalance",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(102),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+				{
+					Price:         decimal.NewFromFloat(101),
+					Size:          decimal.NewFromFloat(100),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "2",
+				},
+			},
+			expBidPenalty: decimal.NewFromFloat(0.001),
+			expAskPenalty: decimal.Zero,
+		},
+		{
+			name: "empty asks",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(3),
+					Side:          models.OrderSideBuy,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+			},
+			expBidPenalty: decimal.NewFromFloat(0.05),
+			expAskPenalty: decimal.Zero,
+		},
+		{
+			name: "empty bids",
+			orders: []models.Order{
+				{
+					Price:         decimal.NewFromFloat(100),
+					Size:          decimal.NewFromFloat(1),
+					Side:          models.OrderSideSell,
+					Status:        models.OrderStatusPlaced,
+					ClientOrderID: "1",
+				},
+			},
+			expBidPenalty: decimal.Zero,
+			expAskPenalty: decimal.NewFromFloat(0.05),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oi := newOpenInterest()
+
+			for _, order := range tc.orders {
+				oi.observe(order)
+			}
+
+			if !eq(oi.bidSpreadPenalty(), tc.expBidPenalty) {
+				t.Errorf("expected bidPenalty %s, got %s", tc.expBidPenalty, oi.bidSpreadPenalty())
+			}
+
+			if !eq(oi.askSpreadPenalty(), tc.expAskPenalty) {
+				t.Errorf("expected askPenalty %s, got %s", tc.expAskPenalty, oi.askSpreadPenalty())
+			}
+		})
 	}
 }
