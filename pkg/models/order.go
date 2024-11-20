@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -71,4 +72,9 @@ type Order struct {
 
 	FilledSize   decimal.Decimal
 	AveragePrice decimal.Decimal
+}
+
+func (o Order) String() string {
+	// TODO: compact representation.
+	return fmt.Sprintf("%#v", o)
 }

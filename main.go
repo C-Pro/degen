@@ -81,7 +81,7 @@ func main() {
 	}
 
 	acc := account.NewAccount("pintu", ptu)
-	monkey := strategies.NewMonkey(
+	ladder := strategies.NewLadder(
 		ctx,
 		acc,
 		theSymbol,
@@ -89,7 +89,7 @@ func main() {
 		spread,
 	)
 
-	acc.SetStrategy(monkey.See)
+	acc.SetStrategy(ladder.See)
 	if err := acc.Start(ctx); err != nil {
 		log.Printf("failed to start account: %v\n", err)
 		return

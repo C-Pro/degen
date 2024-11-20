@@ -321,6 +321,7 @@ type Ladder struct {
 	spread        decimal.Decimal
 	tolerance     decimal.Decimal
 	ps            *positionStructure
+	oi            *openInterest
 }
 
 func NewLadder(
@@ -356,6 +357,7 @@ func NewLadder(
 		orderNotional: orderNotional,
 		tolerance:     spread.Mul(decimal.NewFromFloat(0.3)),
 		ps:            &positionStructure{},
+		oi:            newOpenInterest(),
 	}
 
 	return m
@@ -365,12 +367,18 @@ func (m *Ladder) calcOrderSize(
 	notional decimal.Decimal,
 	bbo decimal.Decimal,
 ) decimal.Decimal {
-	size := roundUp(notional.Div(bbo), m.symbol.QuantityTickSize)
-	if size.LessThan(m.symbol.MinQuantity) {
+	return m.quantizeOrderSize(notional.Div(bbo))
+}
+
+func (m *Ladder) quantizeOrderSize(
+	size decimal.Decimal,
+) decimal.Decimal {
+	q := roundUp(size, m.symbol.QuantityTickSize)
+	if q.LessThan(m.symbol.MinQuantity) {
 		return m.symbol.MinQuantity
 	}
 
-	return size
+	return q
 }
 
 func (m *Ladder) withinTolerance(a, b decimal.Decimal) bool {
@@ -380,6 +388,17 @@ func (m *Ladder) withinTolerance(a, b decimal.Decimal) bool {
 func (m *Ladder) See(e models.ExchangeMessage) {
 	if e.Symbol != m.symbol.Symbol {
 		return
+	}
+
+	switch e.MsgType {
+	case models.MsgTypePositionUpdate:
+		upd := e.Payload.(models.PositionUpdate)
+		m.ps.add(upd.Price.InexactFloat64(), upd.Amount.InexactFloat64())
+	case models.MsgTypeOrderStatus:
+		order := e.Payload.(models.Order)
+		if err := m.oi.observe(order); err != nil {
+			log.Printf("failed to observe order: %v\n", err)
+		}
 	}
 
 	orders := m.acc.GetOrders(m.symbol.Symbol)
@@ -420,22 +439,33 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 		}
 
 		position := m.acc.GetPosition(m.symbol.Symbol)
+		// Base prices based on spread from midprice.
 		desiredBid := roundDown(midprice.Sub(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
 		desiredAsk := roundUp(midprice.Add(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+
+		// Adjust prices based on position.
+		var (
+			noLossPrice float64
+			availSize   float64
+		)
+		reqSize := m.calcOrderSize(m.orderNotional, bbo.Ask.Price)
+		noLossPrice, availSize = m.ps.getMinReducePrice(reqSize.InexactFloat64())
+		size := m.quantizeOrderSize(decimal.NewFromFloat(availSize))
+		avgPrice := decimal.NewFromFloat(noLossPrice)
 		switch {
 		case position.Amount.Sign() == 1:
 			// We are long. Don't want to close at lower price.
-			avgPrice := position.AveragePrice
 			desiredAsk = roundUp(avgPrice.Add(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
 		case position.Amount.Sign() == -1:
 			// We are short. Don't want to close at larger price.
-			avgPrice := position.AveragePrice
 			desiredBid = roundDown(avgPrice.Sub(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
 		}
 
 		// TODO: Makes sense to use batch commands.
 		// toCancel := make([]models.Order, 0, 2)
 		// toPlace := make([]models.Order, 0, 2)
+
+		// See if we already have ok bid.
 		hasDesired := false
 		for _, bid := range bids {
 			if !m.withinTolerance(bid.Price, desiredBid) {
@@ -448,21 +478,26 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 			}
 		}
 
+		// If not, place a new one.
 		if !hasDesired {
-			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+			order := models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideBuy,
 				Type:          models.OrderTypeLimit,
 				PostOnly:      true,
 				Price:         desiredBid,
-				Size:          m.calcOrderSize(m.orderNotional, bbo.Ask.Price),
+				Size:          size,
 				ClientOrderID: uuid.NewString(),
-			})
+			}
+
+			log.Printf("placing order %s", order)
+			_, err := m.acc.PlaceOrder(context.Background(), order)
 			if err != nil {
 				log.Printf("failed to place bid: %v\n", err)
 			}
 		}
 
+		// Place ask.
 		hasDesired = false
 		for _, ask := range asks {
 			if !m.withinTolerance(ask.Price, desiredAsk) {
@@ -476,15 +511,17 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 		}
 
 		if !hasDesired {
-			_, err := m.acc.PlaceOrder(context.Background(), models.Order{
+			order := models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideSell,
 				Type:          models.OrderTypeLimit,
 				PostOnly:      true,
 				Price:         desiredAsk,
-				Size:          m.calcOrderSize(m.orderNotional, bbo.Bid.Price),
+				Size:          size,
 				ClientOrderID: uuid.NewString(),
-			})
+			}
+			log.Printf("placing order %s", order)
+			_, err := m.acc.PlaceOrder(context.Background(), order)
 			if err != nil {
 				log.Printf("failed to place ask: %v\n", err)
 			}
