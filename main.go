@@ -57,13 +57,6 @@ func main() {
 		}
 	}
 
-	go func() {
-		http.Handle("/metrics", promhttp.Handler())
-		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
-			log.Printf("HTTP server stopped with error: %v", err)
-		}
-	}()
-
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
 		os.Getenv("PINTUPRO_KEY"),
@@ -80,7 +73,11 @@ func main() {
 		return
 	}
 
-	acc := account.NewAccount("pintu", ptu)
+	acc, err := account.NewAccount("pintu", ptu)
+	if err != nil {
+		log.Printf("failed to init account: %v\n", err)
+		return
+	}
 	ladder := strategies.NewLadder(
 		ctx,
 		acc,
@@ -89,6 +86,14 @@ func main() {
 		spread,
 	)
 
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
+			log.Printf("HTTP server stopped with error: %v", err)
+		}
+	}()
+
+	// TODO: refactor to be other way around. Strategy should be in control of the event loop.
 	acc.SetStrategy(ladder.See)
 	if err := acc.Start(ctx); err != nil {
 		log.Printf("failed to start account: %v\n", err)
@@ -115,6 +120,11 @@ func main() {
 
 	if err := acc.SubscribeUserOrders(ctx); err != nil {
 		log.Printf("failed to subscribe orders: %v\n", err)
+		return
+	}
+
+	if err := acc.SubscribeUserTrades(ctx); err != nil {
+		log.Printf("failed to subscribe trades: %v\n", err)
 		return
 	}
 

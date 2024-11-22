@@ -47,14 +47,24 @@ type Account struct {
 	mux sync.RWMutex
 }
 
-func NewAccount(id string, api exchange) *Account {
-	return &Account{
+func NewAccount(id string, api exchange) (*Account, error) {
+	a := &Account{
 		id:        id,
 		exchange:  api,
 		balances:  make(map[string]models.Balance),
 		positions: make(map[string]models.Position),
 		orders:    geche.NewKV[models.Order](geche.NewMapCache[string, models.Order]()),
 	}
+
+	info, err := a.GetAccountInfo(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get initial account info: %w", err)
+	}
+
+	a.balances = info.Balances
+	a.positions = info.Positions
+
+	return a, nil
 }
 
 func (a *Account) SetStrategy(cb strategyCallback) {
@@ -64,14 +74,6 @@ func (a *Account) SetStrategy(cb strategyCallback) {
 }
 
 func (a *Account) Start(ctx context.Context) error {
-	info, err := a.GetAccountInfo(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get initial account info: %w", err)
-	}
-
-	a.balances = info.Balances
-	a.positions = info.Positions
-
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -102,6 +104,16 @@ func (a *Account) updateLoop(ctx context.Context, ch chan models.ExchangeMessage
 		case <-ctx.Done():
 			return
 		case msg := <-ch:
+			if (msg.MsgType != models.MsgTypeBBO) && (msg.MsgType != models.MsgTypeBalanceUpdate) {
+				var mt string
+				switch msg.MsgType {
+				case models.MsgTypeOrderStatus:
+					mt = "order"
+				case models.MsgTypePositionUpdate:
+					mt = "position"
+				}
+				log.Printf("Received %s message: %v\n", mt, msg)
+			}
 			if err := a.Update(msg); err != nil {
 				return
 			}
@@ -138,6 +150,7 @@ func (a *Account) UpdatePosition(
 	price decimal.Decimal,
 	updatedAt time.Time,
 ) {
+	log.Printf("Updating position %s: %s %s\n", symbol, amount, price)
 	a.mux.Lock()
 	defer func() {
 		metrics.RecordPosition(a.exchange.Name(), symbol, a.positions[symbol])

@@ -155,10 +155,13 @@ func TestUpdatePosition(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAccount("test", dummy.NewDummy(
+			a, err := NewAccount("test", dummy.NewDummy(
 				context.Background(),
 				"key", "secret", "https://test.com", "wss://test.com/ws",
 			))
+			if err != nil {
+				t.Fatalf("unexpected error in NewAccount: %v", err)
+			}
 			a.positions[tc.symbol] = tc.postition
 			a.UpdatePosition(tc.symbol, tc.amount, tc.price, ts)
 			if diff := cmp.Diff(tc.expected, a.positions[tc.symbol]); diff != "" {

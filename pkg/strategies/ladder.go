@@ -342,14 +342,6 @@ func NewLadder(
 		return nil
 	}
 
-	log.Printf("Symbol %s", s.Symbol)
-	log.Printf("PriceTick: %s", s.PriceTickSize.String())
-	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
-	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
-		log.Printf("failed to cancel all orders: %v\n", err)
-		return nil
-	}
-
 	m := &Ladder{
 		acc:           acc,
 		symbol:        s,
@@ -359,6 +351,21 @@ func NewLadder(
 		ps:            &positionStructure{},
 		oi:            newOpenInterest(),
 	}
+
+	for _, o := range acc.GetOrders(symbol) {
+		m.oi.observe(o)
+	}
+
+	log.Printf("Symbol %s", s.Symbol)
+	log.Printf("PriceTick: %s", s.PriceTickSize.String())
+	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
+	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
+		log.Printf("failed to cancel all orders: %v\n", err)
+		return nil
+	}
+
+	initialPosition := acc.GetPosition(symbol)
+	m.ps.add(initialPosition.AveragePrice.InexactFloat64(), initialPosition.Amount.InexactFloat64())
 
 	return m
 }
@@ -479,7 +486,7 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 		}
 
 		// If not, place a new one.
-		if !hasDesired {
+		if !hasDesired && desiredBid.IsPositive() {
 			order := models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideBuy,
@@ -510,7 +517,7 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 			}
 		}
 
-		if !hasDesired {
+		if !hasDesired && desiredAsk.IsPositive() {
 			order := models.Order{
 				Symbol:        m.symbol.Symbol,
 				Side:          models.OrderSideSell,

@@ -76,5 +76,5 @@ type Order struct {
 
 func (o Order) String() string {
 	// TODO: compact representation.
-	return fmt.Sprintf("%#v", o)
+	return fmt.Sprintf("%s:%s:%s size: %s price: %s", o.Symbol, o.Side, o.Type, o.Size, o.Price)
 }
