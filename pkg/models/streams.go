@@ -53,6 +53,7 @@ type BalanceUpdate struct {
 }
 
 type PositionUpdate struct {
+	ID        string
 	Symbol    string
 	Amount    decimal.Decimal
 	Price     decimal.Decimal
@@ -60,6 +61,7 @@ type PositionUpdate struct {
 }
 
 type Trade struct {
+	ID        string
 	Side      OrderSide
 	Size      decimal.Decimal
 	Price     decimal.Decimal

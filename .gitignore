@@ -6,3 +6,5 @@ degen.sh
 *.7z
 *.log
 *.csv
+*.tar
+*.gz
