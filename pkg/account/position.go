@@ -1,9 +1,11 @@
 package account
 
 import (
-	"degen/pkg/models"
+	"fmt"
 	"math"
 	"time"
+
+	"degen/pkg/models"
 
 	"github.com/shopspring/decimal"
 )
@@ -27,21 +29,21 @@ func (e entry) Size() decimal.Decimal {
 // This allows to understand exact price structure of the position,
 // instead of treating it is as a big blob with average price.
 type positionStructure struct {
-	long      bool
-	sizes     map[float64]entry
-	head      float64
-	totalSize decimal.Decimal
-	avgPrice  decimal.Decimal
-	updatedAt time.Time
+	long        bool
+	sizes       map[float64]entry
+	head        float64
+	totalSize   decimal.Decimal
+	avgPrice    decimal.Decimal
+	updatedAt   time.Time
 	realizedPnL decimal.Decimal
 }
 
 func (p *positionStructure) Position() models.Position {
 	return models.Position{
-		Amount: p.totalSize,
+		Amount:       p.totalSize,
 		AveragePrice: p.avgPrice,
-		UpdatedAt: p.updatedAt,
-		RealizedPnL: p.realizedPnL,
+		UpdatedAt:    p.updatedAt,
+		RealizedPnL:  p.realizedPnL,
 	}
 }
 
@@ -119,7 +121,7 @@ func (p *positionStructure) Update(upd models.PositionUpdate) {
 	p.updatedAt = upd.Timestamp
 	p.totalSize = p.totalSize.Add(upd.Amount)
 
-	//p.avgPrice = (p.avgPrice*(p.totalSize-size) + price*size) / p.totalSize
+	// p.avgPrice = (p.avgPrice*(p.totalSize-size) + price*size) / p.totalSize
 	p.avgPrice = (p.avgPrice.Mul(p.totalSize.Sub(upd.Amount)).Add(upd.Price.Mul(upd.Amount))).Div(p.totalSize)
 }
 
@@ -141,16 +143,19 @@ func (p *positionStructure) reduce(upd models.PositionUpdate) {
 		next = e.next
 		// If the entry is smaller than the size, remove it.
 		if math.Abs(e.size) <= math.Abs(size) {
+			pnl := curr * e.size - upd.Price.InexactFloat64()*e.size
+			fmt.Println(pnl)
+			p.realizedPnL = p.realizedPnL.Add(decimal.NewFromFloat(curr).Mul(e.Size()).Sub(upd.Price.Mul(e.Size())))
 			size += e.size // decreasing absolute value of size.
 			delete(p.sizes, curr)
 			switch {
 			case p.totalSize.Sub(e.Size()).IsZero():
 				p.avgPrice = decimal.Zero
 			default:
-				//p.avgPrice = (p.avgPrice*p.totalSize - curr*e.size) / (p.totalSize - e.size)
+				// p.avgPrice = (p.avgPrice*p.totalSize - curr*e.size) / (p.totalSize - e.size)
 				p.avgPrice = p.avgPrice.Mul(p.totalSize).
-				Sub(decimal.NewFromFloat(curr).Mul(e.Size())).
-				Div(p.totalSize.Sub(e.Size()))
+					Sub(decimal.NewFromFloat(curr).Mul(e.Size())).
+					Div(p.totalSize.Sub(e.Size()))
 			}
 			p.totalSize = p.totalSize.Sub(e.Size())
 			if e.prev == 0 {
@@ -161,11 +166,14 @@ func (p *positionStructure) reduce(upd models.PositionUpdate) {
 				p.sizes[e.prev] = prevEntry
 			}
 		} else { // If the entry is larger than the size, reduce it.
-			//p.avgPrice = (p.avgPrice*p.totalSize + curr*size) / (p.totalSize + size)
+			p.realizedPnL = p.realizedPnL.Add(
+				decimal.NewFromFloat(curr).Mul(decimal.NewFromFloat(size)).
+					Sub(upd.Price.Mul(decimal.NewFromFloat(size))))
+			// p.avgPrice = (p.avgPrice*p.totalSize + curr*size) / (p.totalSize + size)
 			p.avgPrice = p.avgPrice.Mul(p.totalSize).
-			Add(decimal.NewFromFloat(curr).Mul(decimal.NewFromFloat(size))).
-			Div(p.totalSize.Add(decimal.NewFromFloat(size)))
-			//p.totalSize += size
+				Add(decimal.NewFromFloat(curr).Mul(decimal.NewFromFloat(size))).
+				Div(p.totalSize.Add(decimal.NewFromFloat(size)))
+			// p.totalSize += size
 			p.totalSize = p.totalSize.Add(decimal.NewFromFloat(size))
 			e.size += size
 			p.sizes[curr] = e

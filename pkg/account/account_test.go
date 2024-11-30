@@ -155,6 +155,11 @@ func TestUpdatePosition(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+
+			if tc.name == "reduce long position to zero" {
+				t.Log("here")
+			}
+
 			a, err := NewAccount("test", dummy.NewDummy(
 				context.Background(),
 				"key", "secret", "https://test.com", "wss://test.com/ws",
@@ -162,9 +167,18 @@ func TestUpdatePosition(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error in NewAccount: %v", err)
 			}
-			a.positions[tc.symbol] = tc.postition
+			upd := models.PositionUpdate{
+				Amount: tc.postition.Amount,
+				Price:  tc.postition.AveragePrice,
+				Timestamp: tc.postition.UpdatedAt,
+			}
+			ps := &positionStructure{}
+			ps.Update(upd)
+			ps.realizedPnL = tc.postition.RealizedPnL
+
+			a.positions[tc.symbol] = ps
 			a.UpdatePosition(tc.symbol, tc.amount, tc.price, ts)
-			if diff := cmp.Diff(tc.expected, a.positions[tc.symbol]); diff != "" {
+			if diff := cmp.Diff(tc.expected, a.positions[tc.symbol].Position()); diff != "" {
 				t.Errorf("UpdatePosition() mismatch (-want +got):\n%s", diff)
 			}
 		})
