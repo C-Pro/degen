@@ -151,11 +151,28 @@ func TestUpdatePosition(t *testing.T) {
 				RealizedPnL:  decimal.NewFromFloat(1000),
 			},
 		},
+		{
+			name: "reduce short position to zero",
+			postition: models.Position{
+				Amount:       decimal.NewFromFloat(-1),
+				AveragePrice: decimal.NewFromFloat(10000),
+				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(1000),
+			},
+			symbol: "BTCUSD",
+			amount: decimal.NewFromFloat(1),
+			price:  decimal.NewFromFloat(9000),
+			expected: models.Position{
+				Amount:       decimal.Zero,
+				AveragePrice: decimal.Zero,
+				UpdatedAt:    ts,
+				RealizedPnL:  decimal.NewFromFloat(2000),
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
 			if tc.name == "reduce long position to zero" {
 				t.Log("here")
 			}
@@ -168,8 +185,8 @@ func TestUpdatePosition(t *testing.T) {
 				t.Fatalf("unexpected error in NewAccount: %v", err)
 			}
 			upd := models.PositionUpdate{
-				Amount: tc.postition.Amount,
-				Price:  tc.postition.AveragePrice,
+				Amount:    tc.postition.Amount,
+				Price:     tc.postition.AveragePrice,
 				Timestamp: tc.postition.UpdatedAt,
 			}
 			ps := &positionStructure{}

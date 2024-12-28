@@ -1,7 +1,6 @@
 package account
 
 import (
-	"fmt"
 	"math"
 	"time"
 
@@ -143,9 +142,7 @@ func (p *positionStructure) reduce(upd models.PositionUpdate) {
 		next = e.next
 		// If the entry is smaller than the size, remove it.
 		if math.Abs(e.size) <= math.Abs(size) {
-			pnl := curr * e.size - upd.Price.InexactFloat64()*e.size
-			fmt.Println(pnl)
-			p.realizedPnL = p.realizedPnL.Add(decimal.NewFromFloat(curr).Mul(e.Size()).Sub(upd.Price.Mul(e.Size())))
+			p.realizedPnL = p.realizedPnL.Add(upd.Price.Mul(e.Size())).Sub(decimal.NewFromFloat(curr).Mul(e.Size()))
 			size += e.size // decreasing absolute value of size.
 			delete(p.sizes, curr)
 			switch {
