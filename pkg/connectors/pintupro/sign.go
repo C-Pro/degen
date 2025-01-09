@@ -124,14 +124,6 @@ func paramsToString(params any) string {
 	return b.String()
 }
 
-/*
-	sigPayload := fmt.Sprint(requestBody.RequestId) + fmt.Sprint(requestBody.Timestamp) + requestBody.Method + apiKey + paramsString
-	sigHash := hmac.New(sha256.New, []byte(apiSecret))
-	sigHash.Write([]byte(sigPayload))
-	sigBytes := sigHash.Sum(nil)
-	return hex.EncodeToString(sigBytes), nil
-*/
-
 func signature(requestID, method, key, paramString, secret string, ts time.Time) string {
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(requestID))
