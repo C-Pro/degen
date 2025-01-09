@@ -38,4 +38,4 @@ jobs:
         ref: ${{ github.event.pull_request.head.sha }}
     - uses: golangci/golangci-lint-action@v3
       with:
-          version: v1.57.2
+          version: v1.61.0
