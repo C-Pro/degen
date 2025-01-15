@@ -353,7 +353,10 @@ func NewLadder(
 	}
 
 	for _, o := range acc.GetOrders(symbol) {
-		m.oi.observe(o)
+		if err := m.oi.observe(o); err != nil {
+			log.Printf("failed to observe order: %v\n", err)
+			return nil
+		}
 	}
 
 	log.Printf("Symbol %s", s.Symbol)

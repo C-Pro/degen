@@ -647,7 +647,9 @@ func TestOpenInterest(t *testing.T) {
 			oi := newOpenInterest()
 
 			for _, order := range tc.orders {
-				oi.observe(order)
+				if err:=oi.observe(order); err != nil {
+					t.Errorf("error observing order: %v", err)
+				}
 			}
 
 			if !oi.totalBidSize.Equal(tc.expBidOI) {
@@ -796,7 +798,9 @@ func TestSpreadPenalty(t *testing.T) {
 			oi := newOpenInterest()
 
 			for _, order := range tc.orders {
-				oi.observe(order)
+				if err := oi.observe(order); err != nil {
+					t.Errorf("error observing order: %v", err)
+				}
 			}
 
 			if !eq(oi.bidSpreadPenalty(), tc.expBidPenalty) {
