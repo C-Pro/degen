@@ -234,7 +234,7 @@ func (oi *openInterest) observe(o models.Order) error {
 			}
 		}
 
-		if oi.totalBidSize.LessThanOrEqual(decimal.Zero) {
+		if oi.totalBidSize.IsNegative() {
 			return fmt.Errorf("negative total bid size after observing order %s", o.ClientOrderID)
 		}
 
@@ -257,7 +257,7 @@ func (oi *openInterest) observe(o models.Order) error {
 			}
 		}
 
-		if oi.totalAskSize.LessThanOrEqual(decimal.Zero) {
+		if oi.totalAskSize.IsNegative() {
 			return fmt.Errorf("negative total ask size after observing order %s", o.ClientOrderID)
 		}
 	}

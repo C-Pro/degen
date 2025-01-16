@@ -134,10 +134,6 @@ func TestPositionAddAvgPrice(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := positionStructure{}
-			if tc.name == "close long position 2" {
-				t.Log("here")
-			}
-
 			for _, trade := range tc.trades {
 				p.add(trade[0], trade[1])
 			}
@@ -645,7 +641,6 @@ func TestOpenInterest(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			oi := newOpenInterest()
-
 			for _, order := range tc.orders {
 				if err:=oi.observe(order); err != nil {
 					t.Errorf("error observing order: %v", err)
