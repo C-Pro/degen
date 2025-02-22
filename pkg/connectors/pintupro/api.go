@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -136,6 +137,7 @@ func (api *API) callPublic(
 		return err
 	}
 	u.RawQuery = params.Encode()
+	log.Println(u.String())
 
 	resp, err := api.cl.Get(u.String())
 	if err != nil {
@@ -169,6 +171,7 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 	result := models.AccountInfo{
 		UpdatedAt: tsToTime(resp.Timestamp),
 		Balances:  make(map[string]models.Balance),
+		Positions: make(map[string]models.Position),
 	}
 
 	for asset, rec := range accountInfo.Assets {
@@ -180,9 +183,70 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 			Available: available,
 			UpdatedAt: result.UpdatedAt,
 		}
+
+		// Treating spot asset balances as long positions.
+		bbo, err := api.GetBBO(context.Background(), asset+"-IDR")
+		if err != nil {
+			// If we can't get the BBO, just skip this asset.
+			continue
+		}
+
+		// Assume that the position avg price is the buy price of the BBO.
+		if bbo.Bid.Price.IsPositive() {
+			result.Positions[asset+"-IDR"] = models.Position{
+				Amount:       balance,
+				AveragePrice: bbo.Bid.Price,
+				UpdatedAt:    result.UpdatedAt,
+			}
+		}
+
 	}
 
 	return &result, nil
+}
+
+// GetBBO returns the order book BBO for the given symbol.
+func (api *API) GetBBO(
+	_ context.Context,
+	symbol string,
+) (*models.BBO, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("depth", fmt.Sprintf("%d", 1))
+
+	var ob orderBookMsg
+	resp := responseMessage{
+		Data: &ob,
+	}
+	if err := api.call("public/get-book", params, &resp); err != nil {
+		return nil, fmt.Errorf("pintupro.GetBBO: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return nil,
+			fmt.Errorf("pintupro.GetBBO: unexpected code %d %s %s",
+				resp.Code, resp.Message, resp.Reason,
+			)
+	}
+
+	// For now I don't care much about depth, so I will just take the first level.
+	bbo := models.BBO{
+		Timestamp: tsToTime(resp.Timestamp),
+		Bid:       models.PriceLevel{},
+		Ask:       models.PriceLevel{},
+	}
+
+	if len(ob.Bids) > 0 {
+		bbo.Bid.Price, _ = decimal.NewFromString(ob.Bids[0][0])
+		bbo.Bid.Size, _ = decimal.NewFromString(ob.Bids[0][1])
+	}
+
+	if len(ob.Asks) > 0 {
+		bbo.Ask.Price, _ = decimal.NewFromString(ob.Asks[0][0])
+		bbo.Ask.Size, _ = decimal.NewFromString(ob.Asks[0][1])
+	}
+
+	return &bbo, nil
 }
 
 // easyjson:json

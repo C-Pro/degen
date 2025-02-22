@@ -38,7 +38,7 @@ type Account struct {
 	exchange
 	id        string
 	balances  map[string]models.Balance
-	positions map[string]models.Position
+	positions map[string]*positionStructure
 	orders    *geche.KV[models.Order]
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -47,14 +47,31 @@ type Account struct {
 	mux sync.RWMutex
 }
 
-func NewAccount(id string, api exchange) *Account {
-	return &Account{
+func NewAccount(id string, api exchange) (*Account, error) {
+	a := &Account{
 		id:        id,
 		exchange:  api,
 		balances:  make(map[string]models.Balance),
-		positions: make(map[string]models.Position),
+		positions: make(map[string]*positionStructure),
 		orders:    geche.NewKV[models.Order](geche.NewMapCache[string, models.Order]()),
 	}
+
+	info, err := a.GetAccountInfo(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get initial account info: %w", err)
+	}
+
+	a.balances = info.Balances
+	for sym, pos := range info.Positions {
+		a.positions[sym] = &positionStructure{}
+		a.positions[sym].Update(models.PositionUpdate{
+			Amount: pos.Amount,
+			Price:  pos.AveragePrice,
+			Timestamp: pos.UpdatedAt,
+		})
+	}
+
+	return a, nil
 }
 
 func (a *Account) SetStrategy(cb strategyCallback) {
@@ -64,14 +81,6 @@ func (a *Account) SetStrategy(cb strategyCallback) {
 }
 
 func (a *Account) Start(ctx context.Context) error {
-	info, err := a.GetAccountInfo(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get initial account info: %w", err)
-	}
-
-	a.balances = info.Balances
-	a.positions = info.Positions
-
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	ch := make(chan models.ExchangeMessage, 100)
 	go func() {
@@ -102,6 +111,16 @@ func (a *Account) updateLoop(ctx context.Context, ch chan models.ExchangeMessage
 		case <-ctx.Done():
 			return
 		case msg := <-ch:
+			if (msg.MsgType != models.MsgTypeBBO) && (msg.MsgType != models.MsgTypeBalanceUpdate) {
+				var mt string
+				switch msg.MsgType {
+				case models.MsgTypeOrderStatus:
+					mt = "order"
+				case models.MsgTypePositionUpdate:
+					mt = "position"
+				}
+				log.Printf("Received %s message: %v\n", mt, msg)
+			}
 			if err := a.Update(msg); err != nil {
 				return
 			}
@@ -138,71 +157,22 @@ func (a *Account) UpdatePosition(
 	price decimal.Decimal,
 	updatedAt time.Time,
 ) {
+	log.Printf("Updating position %s: %s %s\n", symbol, amount, price)
 	a.mux.Lock()
-	defer func() {
-		metrics.RecordPosition(a.exchange.Name(), symbol, a.positions[symbol])
-		a.mux.Unlock()
-	}()
+	defer a.mux.Unlock()
 
-	// There are several cases to consider:
-	// 1. Adding to a long position (simple one).
-	// 2. Reducing position. Existing vwap is unchanged. PnL on the reduced size is realized.
-	// 3. Adding to a short position. Same as 1, but work on absolute values.
-	// 4. Reducing position so it becomes zero. Unrealized PnL is realized.
-	// 5. Reducing position so much it opens a position in opposite direction.
-	// In this case new vwap is the price of the incoming trade. PnL on the reduced size is realized.
-	// 6. New position (previous was zero).
-
-	oldPosition := a.positions[symbol]
-	newAmount := oldPosition.Amount.Add(amount)
-
-	if newAmount.IsZero() {
-		// Case 4. Reducing position so it becomes zero.
-		a.positions[symbol] = models.Position{
-			Amount:       decimal.Zero,
-			AveragePrice: decimal.Zero,
-			UpdatedAt:    updatedAt,
-			RealizedPnL: oldPosition.RealizedPnL.Add(
-				oldPosition.UnrealizedPnL(price),
-			),
-		}
+	pos, ok := a.positions[symbol]
+	if !ok {
 		return
 	}
 
-	var (
-		vwap decimal.Decimal
-		pnl  decimal.Decimal
-	)
-	switch {
-	case oldPosition.Amount.IsZero():
-		// Case 6. New position (previous was zero).
-		vwap = price
-	case oldPosition.Amount.Sign() == newAmount.Sign() &&
-		oldPosition.Amount.Abs().LessThan(newAmount.Abs()):
-		// Cases 1 and 3: increasing position.
-		vwap = oldPosition.AveragePrice.Mul(oldPosition.Amount.Abs()).
-			Add(price.Mul(amount.Abs())).
-			Div(newAmount.Abs())
-	case oldPosition.Amount.Sign() == newAmount.Sign() &&
-		oldPosition.Amount.Abs().GreaterThan(newAmount.Abs()):
-		// Case 2. Reducing position. Existing vwap is unchanged.
-		vwap = oldPosition.AveragePrice
-		pnl = oldPosition.Amount.Sub(newAmount).Mul(price.Sub(oldPosition.AveragePrice))
-	case oldPosition.Amount.Sign() != newAmount.Sign():
-		// Case 5. Reducing position so much it opens a position
-		// in the opposite direction.
-		vwap = price
-		pnl = oldPosition.Amount.Mul(price.Sub(oldPosition.AveragePrice))
-	default:
-		panic("unaccounted for case")
-	}
+	pos.Update(models.PositionUpdate{
+		Amount:    amount,
+		Price:     price,
+		Timestamp: updatedAt,
+	})
 
-	a.positions[symbol] = models.Position{
-		Amount:       newAmount,
-		AveragePrice: vwap,
-		UpdatedAt:    updatedAt,
-		RealizedPnL:  oldPosition.RealizedPnL.Add(pnl),
-	}
+	metrics.RecordPosition(a.exchange.Name(), symbol, pos.Position())
 }
 
 func orderKey(order models.Order) string {
@@ -241,7 +211,12 @@ func (a *Account) GetPosition(symbol string) models.Position {
 	a.mux.RLock()
 	defer a.mux.RUnlock()
 
-	return a.positions[symbol]
+	pos, ok := a.positions[symbol]
+	if !ok {
+		return models.Position{}
+	}
+
+	return pos.Position()
 }
 
 func (a *Account) Update(upd models.ExchangeMessage) error {
@@ -271,7 +246,8 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 		}
 		metrics.RecordBBO(a.exchange.Name(), upd.Symbol, bbo)
 		position, ok := a.positions[upd.Symbol]
-		if ok && !position.Amount.IsZero() {
+		if ok && !position.totalSize.IsZero() {
+			position := position.Position()
 			price := bbo.Ask.Price
 			if position.Amount.Sign() > 0 {
 				price = bbo.Bid.Price

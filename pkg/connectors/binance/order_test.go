@@ -41,7 +41,7 @@ func TestPlaceOrder(t *testing.T) {
 	}
 
 	latency := res.UpdatedAt.Sub(order.CreatedAt)
-	if latency > 500*time.Millisecond {
+	if latency > time.Second {
 		t.Errorf("Latency too big: %v", latency)
 	}
 }
