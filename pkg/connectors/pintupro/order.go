@@ -241,22 +241,6 @@ func (api *API) GetOpenOrders(ctx context.Context, symbol string) ([]models.Orde
 	return orders, nil
 }
 
-/*
-{
-"request_id": "a88b9054-bde2-4fd7-8a4e-c6ff6de212e2",
-"timestamp": 16775774797462,
-"api_key": "my-key",
-"signature": "my-signature",
-"method": "private/get-order-details",
-"params": {
-"symbol": "BTC-IDR",
-"order_id": "aaa-bbb-ccc",
-"t_start": 1676869976772,
-"t_end": 1677869976772,
-}
-}
-*/
-
 // easyjson:json
 type getOrderDetailsRequest struct {
 	Symbol        string `json:"symbol"`
@@ -305,3 +289,4 @@ func (api *API) GetOrderDetails(ctx context.Context, order models.Order) (*model
 
 	return &order, nil
 }
+

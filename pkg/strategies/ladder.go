@@ -2,9 +2,7 @@ package strategies
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"math"
 	"strings"
 
 	"degen/pkg/account"
@@ -14,255 +12,60 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type entry struct {
-	prev float64
-	next float64
-	size float64
+type LadderConfig struct {
+	// Max portion of portfolio to be allocated.
+	PortfolioAllocation  decimal.Decimal
+	// List of spreads between previous level and the current.
+	// For level 0 it is a spread from BBO.
+	LevelsSpread         []decimal.Decimal
+	// Relative size of the level. Sum(LevelsSize)==1.
+	LevelsSize           []decimal.Decimal
+	// How much the spread can move before order is canceled and placed with a new price.
+	LevelsPriceTolerance []decimal.Decimal
 }
 
-type positionStructure struct {
-	long      bool
-	sizes     map[float64]entry
-	head      float64
-	totalSize float64
-	avgPrice  float64
+// Ladder is a market maker that follows
+// the current midprice and places orders with defined spread.
+type Ladder struct {
+	symbol models.SymbolInfo
+	acc    *account.Account
+
+	cfg LadderConfig
 }
 
-func (p *positionStructure) less(a float64, b float64) bool {
-	if p.long {
-		return a < b
+func NewLadder(
+	ctx context.Context,
+	acc *account.Account,
+	symbol string,
+	cfg LadderConfig,
+) *Ladder {
+	symbols, err := acc.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return nil
+	}
+	s, ok := symbols[symbol]
+	if !ok {
+		log.Printf("symbol %s not found\n", symbol)
+		return nil
 	}
 
-	return a > b
-}
-
-func (p *positionStructure) add(price float64, size float64) {
-	if size == 0 {
-		return
+	m := &Ladder{
+		acc:    acc,
+		symbol: s,
+		cfg:    cfg,
 	}
 
-	if p.sizes == nil {
-		p.sizes = make(map[float64]entry)
-		p.long = size > 0
-	} else {
-		// If position side is opposite to the incoming trade, position should be reduced.
-		if p.long != (size > 0) {
-			p.reduce(price, size)
-			return
-		}
+	log.Printf("Symbol %s", s.Symbol)
+	log.Printf("PriceTick: %s", s.PriceTickSize.String())
+	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
+
+	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
+		log.Printf("failed to cancel all orders: %v\n", err)
+		return nil
 	}
 
-	// If entry with the same price exists, update it.
-	if e, ok := p.sizes[price]; ok {
-		e.size += size
-		p.sizes[price] = e
-	} else {
-		// Find where to insert a new entry.
-		switch {
-		// Case 0: first entry.
-		case p.head == 0:
-			p.head = price
-			p.sizes[price] = entry{
-				size: size,
-			}
-		// Case 1: price is better than head, insert at the top.
-		case p.less(price, p.head):
-			p.sizes[price] = entry{
-				next: p.head,
-				size: size,
-			}
-			p.head = price
-		// Default case: find first entry that is better than the incoming price.
-		default:
-			prev := float64(0)
-			curr := p.head
-			for !p.less(price, curr) {
-				prev = curr
-				curr = p.sizes[curr].next
-				if curr == 0 {
-					break
-				}
-			}
-			// Insert new entry between prev and curr.
-			p.sizes[price] = entry{
-				prev: prev,
-				next: curr,
-				size: size,
-			}
-			// Update prev entry's next.
-			prevEntry := p.sizes[prev]
-			prevEntry.next = price
-			p.sizes[prev] = prevEntry
-		}
-	}
-
-	p.totalSize += size
-	p.avgPrice = (p.avgPrice*(p.totalSize-size) + price*size) / p.totalSize
-}
-
-// reduce removes size from the position.
-// It removes up to size liquidity from entries, starting from the head.
-// If size is more than the total size it will create a position of
-// the opposite side with the remaining size.
-func (p *positionStructure) reduce(price float64, size float64) {
-	if size == 0 {
-		return
-	}
-
-	if p.sizes == nil {
-		panic("reducing empty position")
-	}
-
-	// Size here will have the opposite sign to the size of the position.
-	var next float64
-	for curr := p.head; curr != 0 && size != 0; curr = next {
-		e := p.sizes[curr]
-		next = e.next
-		// If the entry is smaller than the size, remove it.
-		if math.Abs(e.size) <= math.Abs(size) {
-			size += e.size // decreasing absolute value of size.
-			delete(p.sizes, curr)
-			switch {
-			case p.totalSize-e.size == 0:
-				p.avgPrice = 0
-			default:
-				p.avgPrice = (p.avgPrice*p.totalSize - curr*e.size) / (p.totalSize - e.size)
-			}
-			p.totalSize -= e.size
-			if e.prev == 0 {
-				p.head = e.next
-			} else {
-				prevEntry := p.sizes[e.prev]
-				prevEntry.next = e.next
-				p.sizes[e.prev] = prevEntry
-			}
-		} else { // If the entry is larger than the size, reduce it.
-			p.avgPrice = (p.avgPrice*p.totalSize + curr*size) / (p.totalSize + size)
-			p.totalSize += size
-			e.size += size
-			p.sizes[curr] = e
-			size = 0
-			break
-		}
-	}
-
-	// If there is still size left, open a new position in
-	// the opposite direction.
-	if size != 0 {
-		p.long = !p.long
-		p.add(price, size)
-	}
-}
-
-// getReduceSize returns the size that position can be reduced by
-// given the expected execution price.
-func (p *positionStructure) getReduceSize(price float64) float64 {
-	if p.sizes == nil {
-		return 0
-	}
-
-	size := 0.0
-	for curr := p.head; curr != 0; curr = p.sizes[curr].next {
-		if p.less(curr, price) {
-			size += p.sizes[curr].size
-			continue
-		}
-		break
-	}
-
-	return size
-}
-
-// getMinReducePrice returns the minimum price at which the position
-// can be reduced by up to the given size.
-func (p *positionStructure) getMinReducePrice(reqSize float64) (price, size float64) {
-	if p.sizes == nil {
-		return 0, 0
-	}
-
-	sizePrice := 0.0
-	for curr := p.head; curr != 0 && reqSize != 0; curr = p.sizes[curr].next {
-		reduceSize := math.Min(math.Abs(reqSize), math.Abs(p.sizes[curr].size))
-		if p.long {
-			reduceSize = -reduceSize
-		}
-		sizePrice += math.Abs(curr * reduceSize)
-		reqSize -= math.Abs(reduceSize)
-		size += math.Abs(reduceSize)
-	}
-
-	if size == 0 {
-		return 0, 0
-	}
-
-	return sizePrice / size, size
-}
-
-// openInterest holds information about currently open oders.
-type openInterest struct {
-	bids         map[string]models.Order
-	asks         map[string]models.Order
-	totalBidSize decimal.Decimal
-	totalAskSize decimal.Decimal
-}
-
-func newOpenInterest() *openInterest {
-	return &openInterest{
-		bids: make(map[string]models.Order),
-		asks: make(map[string]models.Order),
-	}
-}
-
-func (oi *openInterest) observe(o models.Order) error {
-	switch o.Side {
-	case models.OrderSideBuy:
-		old, ok := oi.bids[o.ClientOrderID]
-		oi.bids[o.ClientOrderID] = o
-		switch o.Status {
-		case models.OrderStatusPlaced:
-			oi.totalBidSize = oi.totalBidSize.Add(o.Size)
-		case models.OrderStatusCanceled:
-			cancelledSize := o.Size.Sub(o.FilledSize)
-			oi.totalBidSize = oi.totalBidSize.Sub(cancelledSize)
-		case models.OrderStatusPartiallyFilled, models.OrderStatusFilled:
-			if ok {
-				filledSize := o.FilledSize.Sub(old.FilledSize)
-				oi.totalBidSize = oi.totalBidSize.Sub(filledSize)
-			} else {
-				openSize := o.Size.Sub(o.FilledSize)
-				oi.totalBidSize = oi.totalBidSize.Add(openSize)
-			}
-		}
-
-		if oi.totalBidSize.IsNegative() {
-			return fmt.Errorf("negative total bid size after observing order %s", o.ClientOrderID)
-		}
-
-	case models.OrderSideSell:
-		old, ok := oi.asks[o.ClientOrderID]
-		oi.asks[o.ClientOrderID] = o
-		switch o.Status {
-		case models.OrderStatusPlaced:
-			oi.totalAskSize = oi.totalAskSize.Add(o.Size)
-		case models.OrderStatusCanceled:
-			cancelledSize := o.Size.Sub(o.FilledSize)
-			oi.totalAskSize = oi.totalAskSize.Sub(cancelledSize)
-		case models.OrderStatusPartiallyFilled, models.OrderStatusFilled:
-			if ok {
-				filledSize := o.FilledSize.Sub(old.FilledSize)
-				oi.totalAskSize = oi.totalAskSize.Sub(filledSize)
-			} else {
-				openSize := o.Size.Sub(o.FilledSize)
-				oi.totalAskSize = oi.totalAskSize.Add(openSize)
-			}
-		}
-
-		if oi.totalAskSize.IsNegative() {
-			return fmt.Errorf("negative total ask size after observing order %s", o.ClientOrderID)
-		}
-	}
-
-	return nil
+	return m
 }
 
 // cap spread penalty at 5%
@@ -271,13 +74,15 @@ const spreadPenaltyClamp = 0.05
 // bidSpreadPenalty returns extra spread that should be added to the bid side
 // midprice deviation if total bid size is higher than total ask size.
 // The goal is to keep bid and ask sizes balanced.
-func (oi *openInterest) bidSpreadPenalty() decimal.Decimal {
-	if oi.totalBidSize.IsZero() {
+func (m *Ladder) bidSpreadPenalty() decimal.Decimal {
+	totalBidSize := m.acc.GetTotalBidSize(m.symbol.Symbol)
+	totalAskSize := m.acc.GetTotalAskSize(m.symbol.Symbol)
+	if totalBidSize.IsZero() {
 		return decimal.Zero
 	}
 
 	// Will add 0.05% to the spread for each 1% of bid-heavy imbalance.
-	imbalance := oi.totalBidSize.Sub(oi.totalAskSize).Div(oi.totalBidSize)
+	imbalance := totalBidSize.Sub(totalAskSize).Div(totalBidSize)
 	if imbalance.LessThanOrEqual(decimal.Zero) {
 		return decimal.Zero
 	}
@@ -293,13 +98,15 @@ func (oi *openInterest) bidSpreadPenalty() decimal.Decimal {
 // askSpreadPenalty returns extra spread that should be added to the ask side
 // midprice deviation if total ask size is higher than total bid size.
 // The goal is to keep bid and ask sizes balanced.
-func (oi *openInterest) askSpreadPenalty() decimal.Decimal {
-	if oi.totalAskSize.IsZero() {
+func (m *Ladder) askSpreadPenalty() decimal.Decimal {
+	totalBidSize := m.acc.GetTotalBidSize(m.symbol.Symbol)
+	totalAskSize := m.acc.GetTotalAskSize(m.symbol.Symbol)
+	if totalAskSize.IsZero() {
 		return decimal.Zero
 	}
 
 	// Will add 0.05% to the spread for each 1% of ask-heavy imbalance.
-	imbalance := oi.totalAskSize.Sub(oi.totalBidSize).Div(oi.totalAskSize)
+	imbalance := totalAskSize.Sub(totalBidSize).Div(totalAskSize)
 	if imbalance.LessThanOrEqual(decimal.Zero) {
 		return decimal.Zero
 	}
@@ -310,67 +117,6 @@ func (oi *openInterest) askSpreadPenalty() decimal.Decimal {
 	}
 
 	return penalty
-}
-
-// Ladder is a market maker that follows
-// the current midprice and places orders with defined spread.
-type Ladder struct {
-	orderNotional decimal.Decimal
-	symbol        models.SymbolInfo
-	acc           *account.Account
-	spread        decimal.Decimal
-	tolerance     decimal.Decimal
-	ps            *positionStructure
-	oi            *openInterest
-}
-
-func NewLadder(
-	ctx context.Context,
-	acc *account.Account,
-	symbol string,
-	orderNotional decimal.Decimal,
-	spread decimal.Decimal,
-) *Ladder {
-	symbols, err := acc.GetSymbols(ctx)
-	if err != nil {
-		log.Printf("failed to get symbols: %v\n", err)
-		return nil
-	}
-	s, ok := symbols[symbol]
-	if !ok {
-		log.Printf("symbol %s not found\n", symbol)
-		return nil
-	}
-
-	m := &Ladder{
-		acc:           acc,
-		symbol:        s,
-		spread:        spread,
-		orderNotional: orderNotional,
-		tolerance:     spread.Mul(decimal.NewFromFloat(0.3)),
-		ps:            &positionStructure{},
-		oi:            newOpenInterest(),
-	}
-
-	for _, o := range acc.GetOrders(symbol) {
-		if err := m.oi.observe(o); err != nil {
-			log.Printf("failed to observe order: %v\n", err)
-			return nil
-		}
-	}
-
-	log.Printf("Symbol %s", s.Symbol)
-	log.Printf("PriceTick: %s", s.PriceTickSize.String())
-	log.Printf("SizeTick: %s", s.QuantityTickSize.String())
-	if err := acc.CancelAllOrders(ctx, symbol); err != nil {
-		log.Printf("failed to cancel all orders: %v\n", err)
-		return nil
-	}
-
-	initialPosition := acc.GetPosition(symbol)
-	m.ps.add(initialPosition.AveragePrice.InexactFloat64(), initialPosition.Amount.InexactFloat64())
-
-	return m
 }
 
 func (m *Ladder) calcOrderSize(
@@ -391,8 +137,45 @@ func (m *Ladder) quantizeOrderSize(
 	return q
 }
 
-func (m *Ladder) withinTolerance(a, b decimal.Decimal) bool {
-	return a.Sub(b).Abs().LessThan(a.Mul(m.tolerance))
+
+// GetDesiredOrders returns a list of desired bids and asks given the current BBO,
+// current positions structure and settings like spead, order size, step between
+// price levels and total desired fund allocation.
+func (m *Ladder) GetDesiredOrders(
+	bbo models.BBO,
+	availableBase decimal.Decimal,
+	availableQuote decimal.Decimal,
+	noLossSellPrice decimal.Decimal,
+	noLossBuyPrice decimal.Decimal,
+	position models.Position,
+	cfg LadderConfig,
+	) (bids, asks []models.Order) {
+	if bbo.Bid.Price.IsZero() && bbo.Ask.Price.IsZero() {
+		return nil, nil
+	}
+
+	// midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(decimal.NewFromInt(2))
+	// if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
+	// 	midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
+	// }
+
+	// Adjust prices based on position.
+	var (
+		noLossPrice float64
+		availSize   float64
+	)
+	reqSize := m.calcOrderSize(m.orderNotional, bbo.Ask.Price)
+	noLossPrice, availSize = m.ps.getMinReducePrice(reqSize.InexactFloat64())
+	size := m.quantizeOrderSize(decimal.NewFromFloat(availSize))
+	avgPrice := decimal.NewFromFloat(noLossPrice)
+	switch {
+	case position.Amount.Sign() == 1:
+		// We are long. Don't want to close at lower price.
+		desiredAsk = roundUp(avgPrice.Add(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+	case position.Amount.Sign() == -1:
+		// We are short. Don't want to close at larger price.
+		desiredBid = roundDown(avgPrice.Sub(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+	}
 }
 
 func (m *Ladder) See(e models.ExchangeMessage) {
@@ -401,9 +184,6 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 	}
 
 	switch e.MsgType {
-	case models.MsgTypePositionUpdate:
-		upd := e.Payload.(models.PositionUpdate)
-		m.ps.add(upd.Price.InexactFloat64(), upd.Amount.InexactFloat64())
 	case models.MsgTypeOrderStatus:
 		order := e.Payload.(models.Order)
 		if err := m.oi.observe(order); err != nil {
@@ -423,7 +203,7 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 	}
 
 	// Hack to prevent too many orders.
-	if len(orders) > 4 {
+	if len(orders) > 20 {
 		if err := m.acc.SyncWithExchange(context.Background(), []string{m.symbol.Symbol}); err != nil {
 			log.Printf("failed to sync with exchange: %v\n", err)
 		}

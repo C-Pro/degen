@@ -47,6 +47,7 @@ func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) er
 }
 
 func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+	d.ch = ch
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {

@@ -23,6 +23,7 @@ type exchange interface {
 	PlaceOrder(ctx context.Context, order models.Order) (*models.Order, error)
 	CancelOrder(ctx context.Context, order models.Order) (*models.Order, error)
 	CancelAllOrders(ctx context.Context, symbol string) error
+	GetOpenOrders(ctx context.Context, symbol string) ([]models.Order, error)
 	Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 	SubscribeBookTickers(ctx context.Context, symbols []string) error
 	SubscribeBookAggTrades(ctx context.Context, symbols []string) error
@@ -40,9 +41,11 @@ type Account struct {
 	balances  map[string]models.Balance
 	positions map[string]*positionStructure
 	orders    *geche.KV[models.Order]
+	interest  map[string]*openInterest
 	ctx       context.Context
 	cancel    context.CancelFunc
 	strategy  strategyCallback
+	errCh     chan error
 
 	mux sync.RWMutex
 }
@@ -53,7 +56,9 @@ func NewAccount(id string, api exchange) (*Account, error) {
 		exchange:  api,
 		balances:  make(map[string]models.Balance),
 		positions: make(map[string]*positionStructure),
-		orders:    geche.NewKV[models.Order](geche.NewMapCache[string, models.Order]()),
+		orders:    geche.NewKV(geche.NewMapCache[string, models.Order]()),
+		interest:  make(map[string]*openInterest),
+		errCh:     make(chan error),
 	}
 
 	info, err := a.GetAccountInfo(context.Background())
@@ -65,10 +70,26 @@ func NewAccount(id string, api exchange) (*Account, error) {
 	for sym, pos := range info.Positions {
 		a.positions[sym] = &positionStructure{}
 		a.positions[sym].Update(models.PositionUpdate{
-			Amount: pos.Amount,
-			Price:  pos.AveragePrice,
+			Amount:    pos.Amount,
+			Price:     pos.AveragePrice,
 			Timestamp: pos.UpdatedAt,
 		})
+	}
+
+	orders, err := api.GetOpenOrders(context.Background(), "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get open orders: %w", err)
+	}
+	for _, order := range orders {
+		if err := a.Update(models.ExchangeMessage{
+			Exchange: api.Name(),
+			MsgType:  models.MsgTypeOrderStatus,
+			Symbol:   order.Symbol,
+			Payload:  order,
+		},
+		); err != nil {
+			return nil, fmt.Errorf("failed to update order: %w", err)
+		}
 	}
 
 	return a, nil
@@ -151,6 +172,50 @@ func (a *Account) UpdateBalance(
 	}
 }
 
+func (a *Account) GetOrder(symbol, clientOrderID string) *models.Order {
+	o, err := a.orders.Get(fmt.Sprintf("%s:%s", symbol, clientOrderID))
+	if err != nil {
+		return nil
+	}
+
+	return &o
+}
+
+func (a *Account) GetOpenOrders(symbol string) []models.Order {
+	prefix := ""
+	if symbol != "" {
+		prefix = symbol + ":"
+	}
+
+	orders, _ := a.orders.ListByPrefix(prefix)
+
+	return orders
+}
+
+func (a *Account) GetTotalBidSize(symbol string) decimal.Decimal {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	oi, ok := a.interest[symbol]
+	if !ok {
+		return decimal.Zero
+	}
+
+	return oi.totalBidSize
+}
+
+func (a *Account) GetTotalAskSize(symbol string) decimal.Decimal {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	oi, ok := a.interest[symbol]
+	if !ok {
+		return decimal.Zero
+	}
+
+	return oi.totalAskSize
+}
+
 func (a *Account) UpdatePosition(
 	symbol string,
 	amount decimal.Decimal,
@@ -198,6 +263,16 @@ func (a *Account) UpdateOrder(order models.Order) {
 	}
 
 	a.orders.Set(key, order)
+	if err := a.interest[order.Symbol].observe(order); err != nil {
+		log.Printf("failed to observe order: %v\n", err)
+		orders, err := a.exchange.GetOpenOrders(context.Background(), order.Symbol)
+		if err != nil {
+			a.errCh <- fmt.Errorf("failed to get open orders: %w", err)
+			return
+		}
+
+		a.interest[order.Symbol].setFromOrders(orders)
+	}
 }
 
 func (a *Account) GetBalance(asset string) models.Balance {
@@ -296,17 +371,6 @@ func (a *Account) CancelOrder(ctx context.Context, order models.Order) (*models.
 
 func (a *Account) CancelAllOrders(ctx context.Context, symbol string) error {
 	return a.exchange.CancelAllOrders(ctx, symbol)
-}
-
-func (a *Account) GetOrder(symbol, clientOrderID string) *models.Order {
-	key := fmt.Sprintf("%s:%s", symbol, clientOrderID)
-	o, _ := a.orders.Get(key)
-	return &o
-}
-
-func (a *Account) GetOrders(symbol string) []models.Order {
-	orders, _ := a.orders.ListByPrefix(symbol + ":")
-	return orders
 }
 
 func (a *Account) syncOrders(ctx context.Context, symbol string) error {

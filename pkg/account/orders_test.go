@@ -1,10 +1,8 @@
-package strategies
+package account
 
 import (
 	"testing"
 
-	"degen/pkg/account"
-	"degen/pkg/connectors/dummy"
 	"degen/pkg/models"
 
 	"github.com/shopspring/decimal"
@@ -142,11 +140,8 @@ func TestSpreadPenalty(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ex := dummy.NewDummy(t.Context(), "key", "secret", "https://test.com", "wss://test.com/ws")
-			acc, err := account.NewAccount("test", ex)
-			if err != nil {
-				t.Fatalf("failed to create account: %v", err)
-			}
+			// acc := account.NewAccount()
+			oi := newOpenInterest()
 
 			for _, order := range tc.orders {
 				if err := oi.observe(order); err != nil {

@@ -10,4 +10,8 @@ type SymbolInfo struct {
 	QuantityTickSize decimal.Decimal
 	MinQuantity      decimal.Decimal
 	MaxQuantity      decimal.Decimal
+	MinPrice24h      decimal.Decimal
+	MaxPrice24h      decimal.Decimal
+	Volume24h        decimal.Decimal
+	QuoteVolume24h   decimal.Decimal
 }
