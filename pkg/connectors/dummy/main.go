@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"degen/pkg/models"
 
 	"github.com/c-pro/geche"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -110,10 +112,35 @@ func (d *Dummy) SetSymbol(symbol models.SymbolInfo) {
 	d.symbols.Set(symbol.Symbol, symbol)
 	if slices.Contains(d.subscribedStreams, StreamTickers) {
 		d.ch <- models.ExchangeMessage{
-			MsgType:  models.MsgTypeMarketTicker,
-			Symbol:   symbol.Symbol,
-			Exchange: Name,
-			Payload:  symbol,
+			MsgType:   models.MsgTypeMarketTicker,
+			Symbol:    symbol.Symbol,
+			Exchange:  Name,
+			Payload:   symbol,
+			Timestamp: time.Now().UTC(),
+		}
+	}
+}
+
+func (d *Dummy) SetOrderBook(orderBook models.OrderBook) {
+	if slices.Contains(d.subscribedStreams, StreamOrderBooks) {
+		bbo := models.BBO{
+			Bid: models.PriceLevel{
+				Price: decimal.NewFromFloat(orderBook.Bids[0][0]),
+				Size:  decimal.NewFromFloat(orderBook.Bids[0][1]),
+			},
+			Ask: models.PriceLevel{
+				Price: decimal.NewFromFloat(orderBook.Asks[0][0]),
+				Size:  decimal.NewFromFloat(orderBook.Asks[0][1]),
+			},
+			Timestamp: orderBook.Timestamp,
+		}
+
+		d.ch <- models.ExchangeMessage{
+			MsgType:   models.MsgTypeBBO,
+			Symbol:    orderBook.Symbol,
+			Exchange:  Name,
+			Payload:   bbo,
+			Timestamp: orderBook.Timestamp,
 		}
 	}
 }

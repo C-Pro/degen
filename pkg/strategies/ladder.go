@@ -143,12 +143,6 @@ func (m *Ladder) quantizeOrderSize(
 // price levels and total desired fund allocation.
 func (m *Ladder) GetDesiredOrders(
 	bbo models.BBO,
-	availableBase decimal.Decimal,
-	availableQuote decimal.Decimal,
-	noLossSellPrice decimal.Decimal,
-	noLossBuyPrice decimal.Decimal,
-	position models.Position,
-	cfg LadderConfig,
 	) (bids, asks []models.Order) {
 	if bbo.Bid.Price.IsZero() && bbo.Ask.Price.IsZero() {
 		return nil, nil
@@ -158,6 +152,8 @@ func (m *Ladder) GetDesiredOrders(
 	// if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
 	// 	midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
 	// }
+
+
 
 	// Adjust prices based on position.
 	var (
@@ -191,7 +187,7 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 		}
 	}
 
-	orders := m.acc.GetOrders(m.symbol.Symbol)
+	orders := m.acc.GetOpenOrders(m.symbol.Symbol)
 
 	var bids, asks []models.Order
 	for _, o := range orders {

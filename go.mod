@@ -1,6 +1,6 @@
 module degen
 
-go 1.22.5
+go 1.23
 
 require (
 	github.com/c-pro/geche v1.2.0

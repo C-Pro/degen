@@ -33,8 +33,6 @@ type exchange interface {
 	RequestReconnect(reason string)
 }
 
-type strategyCallback (func(upd models.ExchangeMessage))
-
 type Account struct {
 	exchange
 	id        string
@@ -44,10 +42,11 @@ type Account struct {
 	interest  map[string]*openInterest
 	ctx       context.Context
 	cancel    context.CancelFunc
-	strategy  strategyCallback
 	errCh     chan error
+	updCh     chan models.ExchangeMessage
 
-	mux sync.RWMutex
+	mux    sync.RWMutex
+	stopWg sync.WaitGroup
 }
 
 func NewAccount(id string, api exchange) (*Account, error) {
@@ -59,6 +58,7 @@ func NewAccount(id string, api exchange) (*Account, error) {
 		orders:    geche.NewKV(geche.NewMapCache[string, models.Order]()),
 		interest:  make(map[string]*openInterest),
 		errCh:     make(chan error),
+		updCh:     make(chan models.ExchangeMessage, 100),
 	}
 
 	info, err := a.GetAccountInfo(context.Background())
@@ -95,12 +95,6 @@ func NewAccount(id string, api exchange) (*Account, error) {
 	return a, nil
 }
 
-func (a *Account) SetStrategy(cb strategyCallback) {
-	a.mux.Lock()
-	defer a.mux.Unlock()
-	a.strategy = cb
-}
-
 func (a *Account) Start(ctx context.Context) error {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	ch := make(chan models.ExchangeMessage, 100)
@@ -109,11 +103,24 @@ func (a *Account) Start(ctx context.Context) error {
 		close(ch)
 	}()
 
+	a.stopWg.Add(1)
 	go func() {
+		defer a.stopWg.Done()
 		a.updateLoop(a.ctx, ch)
 	}()
 
 	return nil
+}
+
+func (a *Account) Stop() {
+	a.cancel()
+	a.stopWg.Wait()
+	close(a.errCh)
+	close(a.updCh)
+}
+
+func (a *Account) Updates() <-chan models.ExchangeMessage {
+	return a.updCh
 }
 
 func (a *Account) SubscribeSymbols(symbols []string) error {
@@ -145,12 +152,8 @@ func (a *Account) updateLoop(ctx context.Context, ch chan models.ExchangeMessage
 			if err := a.Update(msg); err != nil {
 				return
 			}
-			a.mux.RLock()
-			strategy := a.strategy
-			a.mux.RUnlock()
-			if strategy != nil {
-				strategy(msg)
-			}
+
+			a.updCh <- msg
 		}
 	}
 }

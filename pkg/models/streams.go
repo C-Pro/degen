@@ -52,8 +52,8 @@ type OrderBook struct {
 	Symbol string
 	// Public order book data is already outdated when we receive it. It does not
 	// make sense to pay decimal.Decimal overhead for the precision.
-	Bids map[float64]float64
-	Asks map[float64]float64
+	Bids      [][2]float64
+	Asks      [][2]float64
 	Timestamp time.Time
 }
 
