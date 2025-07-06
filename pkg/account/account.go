@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
 
@@ -295,6 +296,45 @@ func (a *Account) GetPosition(symbol string) models.Position {
 	}
 
 	return pos.Position()
+}
+
+func (a *Account) GetPositionMinReducePrice(symbol string) decimal.Decimal {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	pos, ok := a.positions[symbol]
+	if !ok {
+		return decimal.Zero
+	}
+
+	if pos.totalSize.IsZero() {
+		return decimal.Zero
+	}
+
+	minPrice := decimal.NewFromFloat(math.MaxFloat64)
+	for price := range pos.sizes {
+		if price < minPrice.InexactFloat64() {
+			minPrice = decimal.NewFromFloat(price)
+		}
+	}
+
+	return minPrice
+}
+
+func (a *Account) GetPositionReduceSize(symbol string, price decimal.Decimal) decimal.Decimal {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	pos, ok := a.positions[symbol]
+	if !ok {
+		return decimal.Zero
+	}
+
+	if pos.totalSize.IsZero() {
+		return decimal.Zero
+	}
+
+	return decimal.NewFromFloat(pos.getReduceSize(price.InexactFloat64()))
 }
 
 func (a *Account) Update(upd models.ExchangeMessage) error {

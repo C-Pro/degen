@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
@@ -14,15 +15,83 @@ import (
 
 type LadderConfig struct {
 	// Max portion of portfolio to be allocated.
-	PortfolioAllocation  decimal.Decimal
+	PortfolioAllocation decimal.Decimal
+	// Number of levels on each side of the midprice.
+	LevelsCount int
 	// List of spreads between previous level and the current.
 	// For level 0 it is a spread from BBO.
-	LevelsSpread         []decimal.Decimal
+	LevelsSpread []decimal.Decimal
 	// Relative size of the level. Sum(LevelsSize)==1.
-	LevelsSize           []decimal.Decimal
+	LevelsSize []decimal.Decimal
 	// How much the spread can move before order is canceled and placed with a new price.
 	LevelsPriceTolerance []decimal.Decimal
 }
+
+func (l *LadderConfig) Validate() error {
+	if l.PortfolioAllocation.IsNegative() {
+		return errors.New("portfolio allocation must be non-negative")
+	}
+	if l.LevelsCount <= 0 {
+		return errors.New("levels count must be positive")
+	}
+	if len(l.LevelsSpread) != l.LevelsCount {
+		return errors.New("levels spread must have the same length as levels count")
+	}
+	if len(l.LevelsSize) != l.LevelsCount {
+		return errors.New("levels size must have the same length as levels count")
+	}
+	if len(l.LevelsPriceTolerance) != l.LevelsCount {
+		return errors.New("levels price tolerance must have the same length as levels count")
+	}
+	if l.PortfolioAllocation.GreaterThan(decimal.NewFromInt(1)) {
+		return errors.New("portfolio allocation must be less than or equal to 1")
+	}
+
+	return nil
+}
+
+type DesiredOrders struct {
+	Bids [][2]decimal.Decimal // [price, size]
+	Asks [][2]decimal.Decimal // [price, size]
+}
+
+func (l *LadderConfig) IdealAllocation(
+	midprice decimal.Decimal,
+	baseTotal decimal.Decimal,
+	quoteTotal decimal.Decimal,
+) DesiredOrders {
+	orders := DesiredOrders{
+		Bids: make([][2]decimal.Decimal, 0, l.LevelsCount),
+		Asks: make([][2]decimal.Decimal, 0, l.LevelsCount),
+	}
+	if midprice.IsZero() || l.PortfolioAllocation.IsZero() {
+		return orders
+	}
+
+	// Bids go from midprice down.
+	price := midprice
+	for i := 0; i < l.LevelsCount; i++ {
+		price = price.Add(midprice.Mul(l.LevelsSpread[i]).Neg())
+		size := baseTotal.Mul(l.LevelsSize[i])
+		if size.IsPositive() {
+			orders.Bids = append(orders.Bids, [2]decimal.Decimal{price, size})
+		}
+	}
+
+	price = midprice
+	// Asks go from midprice up.
+	for i := 0; i < l.LevelsCount; i++ {
+		price = price.Add(midprice.Mul(l.LevelsSpread[i]))
+		size := baseTotal.Mul(l.LevelsSize[i])
+		if size.IsPositive() {
+			orders.Asks = append(orders.Asks, [2]decimal.Decimal{price, size})
+		}
+	}
+
+	return orders
+}
+
+
 
 // Ladder is a market maker that follows
 // the current midprice and places orders with defined spread.
@@ -137,23 +206,36 @@ func (m *Ladder) quantizeOrderSize(
 	return q
 }
 
-
 // GetDesiredOrders returns a list of desired bids and asks given the current BBO,
 // current positions structure and settings like spead, order size, step between
 // price levels and total desired fund allocation.
 func (m *Ladder) GetDesiredOrders(
 	bbo models.BBO,
-	) (bids, asks []models.Order) {
+) (bids, asks []models.Order) {
 	if bbo.Bid.Price.IsZero() && bbo.Ask.Price.IsZero() {
 		return nil, nil
 	}
+
+	baseBalance := m.acc.GetBalance(m.symbol.Base)
+	quoteBalance := m.acc.GetBalance(m.symbol.Quote)
+
+	ideal := m.cfg.IdealAllocation(bbo.Midprice(), baseBalance.Total, quoteBalance.Total)
+
+	pos := m.acc.GetPosition(m.symbol.Symbol)
+	minReducePrice := m.acc.GetPositionMinReducePrice(m.symbol.Symbol)
+	switch pos.Amount.Sign() {
+	case 1:
+		// We are long. Don't want to close at lower price.
+		// Adjust asks to be above min reduce price.
+		if ideal.Asks[0][0].LessThan(minReducePrice) {
+			diff := minReducePrice.Sub(ideal.Asks[0][0])
+
+
 
 	// midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(decimal.NewFromInt(2))
 	// if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
 	// 	midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
 	// }
-
-
 
 	// Adjust prices based on position.
 	var (
