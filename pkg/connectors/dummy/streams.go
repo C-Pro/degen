@@ -48,50 +48,61 @@ func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) er
 
 func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	d.ch = ch
+	if d.Generator != nil {
+		d.Generator(ctx, d, ch)
+		return
+	}
+
+	d.DefaultRandomGenerator(ctx, ch)
+}
+
+func (d *Dummy) DefaultRandomGenerator(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			stream := d.subscribedStreams[rand.Intn(len(d.subscribedStreams))]
-			parts := strings.Split(stream, "@")
-			switch parts[1] {
-			case "bookTicker":
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    parts[0],
-					Timestamp: time.Now().UTC(),
-					MsgType:   models.MsgTypeBBO,
-					Payload: models.BBO{
-						Bid: models.PriceLevel{
-							Price: decimal.NewFromFloat(rand.Float64() * 100),
-							Size:  decimal.NewFromFloat(rand.Float64() * 100),
-						},
-						Ask: models.PriceLevel{
-							Price: decimal.NewFromFloat(rand.Float64() * 100),
-							Size:  decimal.NewFromFloat(rand.Float64() * 100),
-						},
+		case <-ticker.C:
+			if len(d.subscribedStreams) > 0 {
+				stream := d.subscribedStreams[rand.Intn(len(d.subscribedStreams))]
+				parts := strings.Split(stream, "@")
+				switch parts[1] {
+				case "bookTicker":
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    parts[0],
 						Timestamp: time.Now().UTC(),
-					},
-				}
-			case "aggTrade":
-				side := models.OrderSideSell
-				if rand.Float64() < 0.5 {
-					side = models.OrderSideBuy
-				}
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    parts[0],
-					Timestamp: time.Now().UTC(),
-					MsgType:   models.MsgTypePublicTrade,
-					Payload: models.Trade{
-						Price:     decimal.NewFromFloat(rand.Float64() * 100),
-						Size:      decimal.NewFromFloat(rand.Float64() * 100),
+						MsgType:   models.MsgTypeBBO,
+						Payload: models.BBO{
+							Bid: models.PriceLevel{
+								Price: decimal.NewFromFloat(rand.Float64() * 100),
+								Size:  decimal.NewFromFloat(rand.Float64() * 100),
+							},
+							Ask: models.PriceLevel{
+								Price: decimal.NewFromFloat(rand.Float64() * 100),
+								Size:  decimal.NewFromFloat(rand.Float64() * 100),
+							},
+							Timestamp: time.Now().UTC(),
+						},
+					}
+				case "aggTrade":
+					side := models.OrderSideSell
+					if rand.Float64() < 0.5 {
+						side = models.OrderSideBuy
+					}
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    parts[0],
 						Timestamp: time.Now().UTC(),
-						Side:      side,
-					},
+						MsgType:   models.MsgTypePublicTrade,
+						Payload: models.Trade{
+							Price:     decimal.NewFromFloat(rand.Float64() * 100),
+							Size:      decimal.NewFromFloat(rand.Float64() * 100),
+							Timestamp: time.Now().UTC(),
+							Side:      side,
+						},
+					}
 				}
 			}
 
@@ -136,20 +147,27 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 					},
 				}
 			}
-
 		}
 	}
 }
 
 func (d *Dummy) SubscribeUserBalance(ctx context.Context) error {
+	d.subscribedStreams = append(d.subscribedStreams, StreamBalances)
 	return nil
 }
 
 func (d *Dummy) SubscribeUserOrders(ctx context.Context) error {
+	d.subscribedStreams = append(d.subscribedStreams, StreamOrders)
 	return nil
 }
 
 func (d *Dummy) SubscribeUserTrades(ctx context.Context) error {
+	d.subscribedStreams = append(d.subscribedStreams, StreamTrades)
+	return nil
+}
+
+func (d *Dummy) SubscribeUserPositions(ctx context.Context) error {
+	d.subscribedStreams = append(d.subscribedStreams, StreamPositions)
 	return nil
 }
 

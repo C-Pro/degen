@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	theSymbol     = "BTC-IDR"
+	theSymbol     = "WLD-IDR"
 	theAsset      = "IDR"
 	orderNotional = decimal.NewFromFloat(150000)
 	spread        = decimal.NewFromFloat(0.001)
@@ -78,12 +78,35 @@ func main() {
 		log.Printf("failed to init account: %v\n", err)
 		return
 	}
+	bal := acc.GetBalance(theAsset)
+	alloc := decimal.NewFromFloat(1.0)
+	if bal.Total.GreaterThan(decimal.NewFromFloat(500000)) {
+		alloc = decimal.NewFromFloat(500000).Div(bal.Total)
+	}
+
 	ladder := strategies.NewLadder(
 		ctx,
 		acc,
 		theSymbol,
-		orderNotional,
-		spread,
+		strategies.LadderConfig{
+			PortfolioAllocation: alloc,
+			LevelsCount:         3,
+			LevelsSpread: []decimal.Decimal{
+				decimal.NewFromFloat(0.018), // 1.8%
+				decimal.NewFromFloat(0.018), // 1.8%
+				decimal.NewFromFloat(0.018), // 1.8%
+			},
+			LevelsSize: []decimal.Decimal{
+				decimal.NewFromFloat(0.30),  // 30% (150k IDR)
+				decimal.NewFromFloat(0.30),  // 30% (150k IDR)
+				decimal.NewFromFloat(0.40),  // 40% (200k IDR)
+			},
+			LevelsPriceTolerance: []decimal.Decimal{
+				decimal.NewFromFloat(0.008), // 0.8%
+				decimal.NewFromFloat(0.008), // 0.8%
+				decimal.NewFromFloat(0.008), // 0.8%
+			},
+		},
 	)
 
 	go func() {
@@ -93,12 +116,16 @@ func main() {
 		}
 	}()
 
-	// TODO: refactor to be other way around. Strategy should be in control of the event loop.
-	acc.SetStrategy(ladder.See)
 	if err := acc.Start(ctx); err != nil {
 		log.Printf("failed to start account: %v\n", err)
 		return
 	}
+
+	go func() {
+		for msg := range acc.Updates() {
+			ladder.See(msg)
+		}
+	}()
 	initialBalance := acc.GetBalance(theAsset)
 	log.Printf(
 		`Initial balalance:

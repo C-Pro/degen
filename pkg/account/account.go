@@ -232,7 +232,8 @@ func (a *Account) UpdatePosition(
 
 	pos, ok := a.positions[symbol]
 	if !ok {
-		return
+		pos = &positionStructure{}
+		a.positions[symbol] = pos
 	}
 
 	pos.Update(models.PositionUpdate{
@@ -267,7 +268,14 @@ func (a *Account) UpdateOrder(order models.Order) {
 	}
 
 	a.orders.Set(key, order)
-	if err := a.interest[order.Symbol].observe(order); err != nil {
+	a.mux.Lock()
+	if _, ok := a.interest[order.Symbol]; !ok {
+		a.interest[order.Symbol] = newOpenInterest()
+	}
+	oi := a.interest[order.Symbol]
+	a.mux.Unlock()
+
+	if err := oi.observe(order); err != nil {
 		log.Printf("failed to observe order: %v\n", err)
 		orders, err := a.exchange.GetOpenOrders(context.Background(), order.Symbol)
 		if err != nil {
@@ -275,7 +283,7 @@ func (a *Account) UpdateOrder(order models.Order) {
 			return
 		}
 
-		a.interest[order.Symbol].setFromOrders(orders)
+		oi.setFromOrders(orders)
 	}
 }
 
@@ -402,6 +410,9 @@ func (a *Account) PlaceOrder(ctx context.Context, order models.Order) (*models.O
 
 func (a *Account) CancelOrder(ctx context.Context, order models.Order) (*models.Order, error) {
 	o, err := a.exchange.CancelOrder(ctx, order)
+	if err == nil && o != nil {
+		a.UpdateOrder(*o)
+	}
 	if time.Since(order.PlacedAt) > time.Second*10 && errors.Is(err, models.ErrOrderNotFound) {
 		// nolint:errcheck
 		a.orders.Del(orderKey(order))

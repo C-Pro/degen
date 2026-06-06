@@ -22,6 +22,8 @@ const (
 	StreamOrderBooks = "orderbooks"
 )
 
+type EventGenerator func(ctx context.Context, d *Dummy, ch chan<- models.ExchangeMessage)
+
 type Dummy struct {
 	orders *geche.KV[models.Order]
 	// Index mapping client order ID to exchange order ID
@@ -31,6 +33,7 @@ type Dummy struct {
 	symbols           geche.Geche[string, models.SymbolInfo]
 	subscribedStreams []string
 	ch                chan<- models.ExchangeMessage
+	Generator         EventGenerator
 }
 
 func NewDummy(
@@ -103,7 +106,12 @@ func (d *Dummy) SetPosition(position models.Position, symbol string) {
 			MsgType:  models.MsgTypePositionUpdate,
 			Symbol:   symbol,
 			Exchange: Name,
-			Payload:  position,
+			Payload: models.PositionUpdate{
+				Symbol:    symbol,
+				Amount:    position.Amount,
+				Price:     position.AveragePrice,
+				Timestamp: position.UpdatedAt,
+			},
 		}
 	}
 }

@@ -59,6 +59,8 @@ func (l *LadderConfig) IdealAllocation(
 	midprice decimal.Decimal,
 	baseTotal decimal.Decimal,
 	quoteTotal decimal.Decimal,
+	bidPenalty decimal.Decimal,
+	askPenalty decimal.Decimal,
 ) DesiredOrders {
 	orders := DesiredOrders{
 		Bids: make([][2]decimal.Decimal, 0, l.LevelsCount),
@@ -71,8 +73,8 @@ func (l *LadderConfig) IdealAllocation(
 	// Bids go from midprice down.
 	price := midprice
 	for i := 0; i < l.LevelsCount; i++ {
-		price = price.Add(midprice.Mul(l.LevelsSpread[i]).Neg())
-		size := baseTotal.Mul(l.LevelsSize[i])
+		price = price.Sub(price.Mul(l.LevelsSpread[i].Add(bidPenalty)))
+		size := quoteTotal.Mul(l.PortfolioAllocation).Mul(l.LevelsSize[i]).Div(price)
 		if size.IsPositive() {
 			orders.Bids = append(orders.Bids, [2]decimal.Decimal{price, size})
 		}
@@ -81,8 +83,8 @@ func (l *LadderConfig) IdealAllocation(
 	price = midprice
 	// Asks go from midprice up.
 	for i := 0; i < l.LevelsCount; i++ {
-		price = price.Add(midprice.Mul(l.LevelsSpread[i]))
-		size := baseTotal.Mul(l.LevelsSize[i])
+		price = price.Add(price.Mul(l.LevelsSpread[i].Add(askPenalty)))
+		size := baseTotal.Mul(l.PortfolioAllocation).Mul(l.LevelsSize[i])
 		if size.IsPositive() {
 			orders.Asks = append(orders.Asks, [2]decimal.Decimal{price, size})
 		}
@@ -219,7 +221,10 @@ func (m *Ladder) GetDesiredOrders(
 	baseBalance := m.acc.GetBalance(m.symbol.Base)
 	quoteBalance := m.acc.GetBalance(m.symbol.Quote)
 
-	ideal := m.cfg.IdealAllocation(bbo.Midprice(), baseBalance.Total, quoteBalance.Total)
+	bidPenalty := m.bidSpreadPenalty()
+	askPenalty := m.askSpreadPenalty()
+
+	ideal := m.cfg.IdealAllocation(bbo.Midprice(), baseBalance.Total, quoteBalance.Total, bidPenalty, askPenalty)
 
 	pos := m.acc.GetPosition(m.symbol.Symbol)
 	minReducePrice := m.acc.GetPositionMinReducePrice(m.symbol.Symbol)
@@ -229,68 +234,51 @@ func (m *Ladder) GetDesiredOrders(
 		// Adjust asks to be above min reduce price.
 		if ideal.Asks[0][0].LessThan(minReducePrice) {
 			diff := minReducePrice.Sub(ideal.Asks[0][0])
-
-
-
-	// midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(decimal.NewFromInt(2))
-	// if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
-	// 	midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
-	// }
-
-	// Adjust prices based on position.
-	var (
-		noLossPrice float64
-		availSize   float64
-	)
-	reqSize := m.calcOrderSize(m.orderNotional, bbo.Ask.Price)
-	noLossPrice, availSize = m.ps.getMinReducePrice(reqSize.InexactFloat64())
-	size := m.quantizeOrderSize(decimal.NewFromFloat(availSize))
-	avgPrice := decimal.NewFromFloat(noLossPrice)
-	switch {
-	case position.Amount.Sign() == 1:
-		// We are long. Don't want to close at lower price.
-		desiredAsk = roundUp(avgPrice.Add(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
-	case position.Amount.Sign() == -1:
+			for i := range ideal.Asks {
+				ideal.Asks[i][0] = ideal.Asks[i][0].Add(diff)
+			}
+		}
+	case -1:
 		// We are short. Don't want to close at larger price.
-		desiredBid = roundDown(avgPrice.Sub(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		// Adjust bids to be below min reduce price.
+		if ideal.Bids[0][0].GreaterThan(minReducePrice) {
+			diff := ideal.Bids[0][0].Sub(minReducePrice)
+			for i := range ideal.Bids {
+				ideal.Bids[i][0] = ideal.Bids[i][0].Sub(diff)
+			}
+		}
 	}
+
+	for _, b := range ideal.Bids {
+		bids = append(bids, models.Order{
+			Symbol:        m.symbol.Symbol,
+			Side:          models.OrderSideBuy,
+			Type:          models.OrderTypeLimit,
+			PostOnly:      true,
+			Price:         roundDown(b[0], m.symbol.PriceTickSize),
+			Size:          m.quantizeOrderSize(b[1]),
+			ClientOrderID: uuid.NewString(),
+		})
+	}
+
+	for _, a := range ideal.Asks {
+		asks = append(asks, models.Order{
+			Symbol:        m.symbol.Symbol,
+			Side:          models.OrderSideSell,
+			Type:          models.OrderTypeLimit,
+			PostOnly:      true,
+			Price:         roundUp(a[0], m.symbol.PriceTickSize),
+			Size:          m.quantizeOrderSize(a[1]),
+			ClientOrderID: uuid.NewString(),
+		})
+	}
+
+	return bids, asks
 }
 
 func (m *Ladder) See(e models.ExchangeMessage) {
 	if e.Symbol != m.symbol.Symbol {
 		return
-	}
-
-	switch e.MsgType {
-	case models.MsgTypeOrderStatus:
-		order := e.Payload.(models.Order)
-		if err := m.oi.observe(order); err != nil {
-			log.Printf("failed to observe order: %v\n", err)
-		}
-	}
-
-	orders := m.acc.GetOpenOrders(m.symbol.Symbol)
-
-	var bids, asks []models.Order
-	for _, o := range orders {
-		if o.Side == models.OrderSideBuy {
-			bids = append(bids, o)
-		} else {
-			asks = append(asks, o)
-		}
-	}
-
-	// Hack to prevent too many orders.
-	if len(orders) > 20 {
-		if err := m.acc.SyncWithExchange(context.Background(), []string{m.symbol.Symbol}); err != nil {
-			log.Printf("failed to sync with exchange: %v\n", err)
-		}
-		if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
-			log.Printf("failed to cancel all orders: %v\n", err)
-		} else {
-			bids = nil
-			asks = nil
-		}
 	}
 
 	switch e.MsgType {
@@ -301,97 +289,123 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 			return
 		}
 
-		midprice := bbo.Bid.Price.Add(bbo.Ask.Price).Div(two)
-		if bbo.Bid.Price.IsZero() || bbo.Ask.Price.IsZero() {
-			midprice = bbo.Bid.Price.Add(bbo.Ask.Price)
+		orders := m.acc.GetOpenOrders(m.symbol.Symbol)
+
+		var bids, asks []models.Order
+		for _, o := range orders {
+			if o.Side == models.OrderSideBuy {
+				bids = append(bids, o)
+			} else {
+				asks = append(asks, o)
+			}
 		}
 
-		position := m.acc.GetPosition(m.symbol.Symbol)
-		// Base prices based on spread from midprice.
-		desiredBid := roundDown(midprice.Sub(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
-		desiredAsk := roundUp(midprice.Add(midprice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
-
-		// Adjust prices based on position.
-		var (
-			noLossPrice float64
-			availSize   float64
-		)
-		reqSize := m.calcOrderSize(m.orderNotional, bbo.Ask.Price)
-		noLossPrice, availSize = m.ps.getMinReducePrice(reqSize.InexactFloat64())
-		size := m.quantizeOrderSize(decimal.NewFromFloat(availSize))
-		avgPrice := decimal.NewFromFloat(noLossPrice)
-		switch {
-		case position.Amount.Sign() == 1:
-			// We are long. Don't want to close at lower price.
-			desiredAsk = roundUp(avgPrice.Add(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
-		case position.Amount.Sign() == -1:
-			// We are short. Don't want to close at larger price.
-			desiredBid = roundDown(avgPrice.Sub(avgPrice.Mul(m.spread.Div(two))), m.symbol.PriceTickSize)
+		// Hack to prevent too many orders.
+		if len(orders) > 20 {
+			if err := m.acc.SyncWithExchange(context.Background(), []string{m.symbol.Symbol}); err != nil {
+				log.Printf("failed to sync with exchange: %v\n", err)
+			}
+			if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
+				log.Printf("failed to cancel all orders: %v\n", err)
+			} else {
+				bids = nil
+				asks = nil
+			}
 		}
 
-		// TODO: Makes sense to use batch commands.
-		// toCancel := make([]models.Order, 0, 2)
-		// toPlace := make([]models.Order, 0, 2)
+		desiredBids, desiredAsks := m.GetDesiredOrders(bbo)
 
-		// See if we already have ok bid.
-		hasDesired := false
+		// Match open bids to desired bids 1-to-1 (priority to best match)
+		matchedBids := make(map[string]bool)
+		dbToBid := make([]*models.Order, len(desiredBids))
+		for i, db := range desiredBids {
+			tol := m.cfg.LevelsPriceTolerance[i]
+			var bestMatch *models.Order
+			var bestDiff decimal.Decimal
+			for j := range bids {
+				bid := &bids[j]
+				if matchedBids[bid.ClientOrderID] {
+					continue
+				}
+				diff := bid.Price.Sub(db.Price).Abs()
+				if diff.LessThan(db.Price.Mul(tol)) {
+					if bestMatch == nil || diff.LessThan(bestDiff) {
+						bestMatch = bid
+						bestDiff = diff
+					}
+				}
+			}
+			if bestMatch != nil {
+				matchedBids[bestMatch.ClientOrderID] = true
+				dbToBid[i] = bestMatch
+			}
+		}
+
+		// Cancel unmatched bids
 		for _, bid := range bids {
-			if !m.withinTolerance(bid.Price, desiredBid) {
+			if !matchedBids[bid.ClientOrderID] {
 				_, err := m.acc.CancelOrder(context.Background(), bid)
-				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+				if err != nil && !errors.Is(err, models.ErrOrderNotFound) && !strings.Contains(strings.ToUpper(err.Error()), "ORDER_NOT_FOUND") {
 					log.Printf("failed to cancel bid: %v\n", err)
 				}
-			} else {
-				hasDesired = true
 			}
 		}
 
-		// If not, place a new one.
-		if !hasDesired && desiredBid.IsPositive() {
-			order := models.Order{
-				Symbol:        m.symbol.Symbol,
-				Side:          models.OrderSideBuy,
-				Type:          models.OrderTypeLimit,
-				PostOnly:      true,
-				Price:         desiredBid,
-				Size:          size,
-				ClientOrderID: uuid.NewString(),
-			}
-
-			log.Printf("placing order %s", order)
-			_, err := m.acc.PlaceOrder(context.Background(), order)
-			if err != nil {
-				log.Printf("failed to place bid: %v\n", err)
+		// Place new bids where matching failed
+		for i, db := range desiredBids {
+			if dbToBid[i] == nil && db.Price.IsPositive() {
+				log.Printf("placing order %s", db)
+				_, err := m.acc.PlaceOrder(context.Background(), db)
+				if err != nil {
+					log.Printf("failed to place bid: %v\n", err)
+				}
 			}
 		}
 
-		// Place ask.
-		hasDesired = false
+		// Match open asks to desired asks 1-to-1 (priority to best match)
+		matchedAsks := make(map[string]bool)
+		daToAsk := make([]*models.Order, len(desiredAsks))
+		for i, da := range desiredAsks {
+			tol := m.cfg.LevelsPriceTolerance[i]
+			var bestMatch *models.Order
+			var bestDiff decimal.Decimal
+			for j := range asks {
+				ask := &asks[j]
+				if matchedAsks[ask.ClientOrderID] {
+					continue
+				}
+				diff := ask.Price.Sub(da.Price).Abs()
+				if diff.LessThan(da.Price.Mul(tol)) {
+					if bestMatch == nil || diff.LessThan(bestDiff) {
+						bestMatch = ask
+						bestDiff = diff
+					}
+				}
+			}
+			if bestMatch != nil {
+				matchedAsks[bestMatch.ClientOrderID] = true
+				daToAsk[i] = bestMatch
+			}
+		}
+
+		// Cancel unmatched asks
 		for _, ask := range asks {
-			if !m.withinTolerance(ask.Price, desiredAsk) {
+			if !matchedAsks[ask.ClientOrderID] {
 				_, err := m.acc.CancelOrder(context.Background(), ask)
-				if err != nil && !strings.Contains(err.Error(), "ORDER_NOT_FOUND") {
+				if err != nil && !errors.Is(err, models.ErrOrderNotFound) && !strings.Contains(strings.ToUpper(err.Error()), "ORDER_NOT_FOUND") {
 					log.Printf("failed to cancel ask: %v\n", err)
 				}
-			} else {
-				hasDesired = true
 			}
 		}
 
-		if !hasDesired && desiredAsk.IsPositive() {
-			order := models.Order{
-				Symbol:        m.symbol.Symbol,
-				Side:          models.OrderSideSell,
-				Type:          models.OrderTypeLimit,
-				PostOnly:      true,
-				Price:         desiredAsk,
-				Size:          size,
-				ClientOrderID: uuid.NewString(),
-			}
-			log.Printf("placing order %s", order)
-			_, err := m.acc.PlaceOrder(context.Background(), order)
-			if err != nil {
-				log.Printf("failed to place ask: %v\n", err)
+		// Place new asks where matching failed
+		for i, da := range desiredAsks {
+			if daToAsk[i] == nil && da.Price.IsPositive() {
+				log.Printf("placing order %s", da)
+				_, err := m.acc.PlaceOrder(context.Background(), da)
+				if err != nil {
+					log.Printf("failed to place ask: %v\n", err)
+				}
 			}
 		}
 	}

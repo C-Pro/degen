@@ -3,6 +3,7 @@ package dummy
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"degen/pkg/models"
@@ -100,30 +101,22 @@ func (d *Dummy) CancelAllOrders(ctx context.Context, symbol string) error {
 }
 
 func (d *Dummy) GetOrderDetails(ctx context.Context, order models.Order) (*models.Order, error) {
-	if order.ExchangeOrderID == "" {
-		key := orderKey(order)
-		o, err := d.orders.Get(key)
-		if err != nil {
-			return nil, models.ErrOrderNotFound
+	if order.ExchangeOrderID == "" && order.ClientOrderID != "" {
+		exchangeOrderID, err := d.ordersByClientID.Get(order.ClientOrderID)
+		if err == nil {
+			order.ExchangeOrderID = exchangeOrderID
+		} else {
+			log.Printf("GetOrderDetails: ClientOrderID %s not found in ordersByClientID: %v", order.ClientOrderID, err)
 		}
-
-		return &o, nil
 	}
 
-	if order.ClientOrderID != "" {
-		exchangeOrderID, err := d.ordersByClientID.Get(order.ClientOrderID)
-		if err != nil {
-			return nil, models.ErrOrderNotFound
-		}
-
-		order.ExchangeOrderID = exchangeOrderID
+	if order.ExchangeOrderID != "" {
 		key := orderKey(order)
 		o, err := d.orders.Get(key)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			return &o, nil
 		}
-
-		return &o, nil
+		log.Printf("GetOrderDetails: key %s not found in orders: %v", key, err)
 	}
 
 	return nil, models.ErrOrderNotFound
@@ -136,7 +129,7 @@ func (d *Dummy) GetSymbols(ctx context.Context) (map[string]models.SymbolInfo, e
 func (d *Dummy) GetOpenOrders(ctx context.Context, symbol string) ([]models.Order, error) {
 	var orders []models.Order
 	for _, o := range d.orders.Snapshot() {
-		if o.Symbol == symbol {
+		if symbol == "" || o.Symbol == symbol {
 			orders = append(orders, o)
 		}
 	}
