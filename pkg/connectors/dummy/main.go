@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"degen/pkg/models"
@@ -25,7 +26,8 @@ const (
 type EventGenerator func(ctx context.Context, d *Dummy, ch chan<- models.ExchangeMessage)
 
 type Dummy struct {
-	orders *geche.KV[models.Order]
+	mux               sync.RWMutex
+	orders            *geche.KV[models.Order]
 	// Index mapping client order ID to exchange order ID
 	ordersByClientID  geche.Geche[string, string]
 	balances          *geche.KV[models.Balance]
@@ -71,8 +73,12 @@ func (d *Dummy) SetOrder(order models.Order) {
 			d.ordersByClientID.Set(order.ClientOrderID, order.ExchangeOrderID)
 		}
 	}
-	if slices.Contains(d.subscribedStreams, StreamOrders) {
-		d.ch <- models.ExchangeMessage{
+	d.mux.RLock()
+	subscribed := slices.Contains(d.subscribedStreams, StreamOrders)
+	ch := d.ch
+	d.mux.RUnlock()
+	if subscribed && ch != nil {
+		ch <- models.ExchangeMessage{
 			MsgType:  models.MsgTypeOrderStatus,
 			Exchange: Name,
 			Symbol:   order.Symbol,
@@ -86,8 +92,12 @@ func (d *Dummy) SetBalance(balance models.Balance, asset string) {
 	if balance.Total.IsZero() {
 		d.balances.Del(asset)
 	}
-	if slices.Contains(d.subscribedStreams, StreamBalances) {
-		d.ch <- models.ExchangeMessage{
+	d.mux.RLock()
+	subscribed := slices.Contains(d.subscribedStreams, StreamBalances)
+	ch := d.ch
+	d.mux.RUnlock()
+	if subscribed && ch != nil {
+		ch <- models.ExchangeMessage{
 			MsgType:  models.MsgTypeBalanceUpdate,
 			Symbol:   asset,
 			Exchange: Name,
@@ -101,8 +111,12 @@ func (d *Dummy) SetPosition(position models.Position, symbol string) {
 	if position.Amount.IsZero() {
 		d.positions.Del(symbol)
 	}
-	if slices.Contains(d.subscribedStreams, StreamPositions) {
-		d.ch <- models.ExchangeMessage{
+	d.mux.RLock()
+	subscribed := slices.Contains(d.subscribedStreams, StreamPositions)
+	ch := d.ch
+	d.mux.RUnlock()
+	if subscribed && ch != nil {
+		ch <- models.ExchangeMessage{
 			MsgType:  models.MsgTypePositionUpdate,
 			Symbol:   symbol,
 			Exchange: Name,
@@ -118,8 +132,12 @@ func (d *Dummy) SetPosition(position models.Position, symbol string) {
 
 func (d *Dummy) SetSymbol(symbol models.SymbolInfo) {
 	d.symbols.Set(symbol.Symbol, symbol)
-	if slices.Contains(d.subscribedStreams, StreamTickers) {
-		d.ch <- models.ExchangeMessage{
+	d.mux.RLock()
+	subscribed := slices.Contains(d.subscribedStreams, StreamTickers)
+	ch := d.ch
+	d.mux.RUnlock()
+	if subscribed && ch != nil {
+		ch <- models.ExchangeMessage{
 			MsgType:   models.MsgTypeMarketTicker,
 			Symbol:    symbol.Symbol,
 			Exchange:  Name,
@@ -130,7 +148,11 @@ func (d *Dummy) SetSymbol(symbol models.SymbolInfo) {
 }
 
 func (d *Dummy) SetOrderBook(orderBook models.OrderBook) {
-	if slices.Contains(d.subscribedStreams, StreamOrderBooks) {
+	d.mux.RLock()
+	subscribed := slices.Contains(d.subscribedStreams, StreamOrderBooks)
+	ch := d.ch
+	d.mux.RUnlock()
+	if subscribed && ch != nil {
 		bbo := models.BBO{
 			Bid: models.PriceLevel{
 				Price: decimal.NewFromFloat(orderBook.Bids[0][0]),
@@ -143,7 +165,7 @@ func (d *Dummy) SetOrderBook(orderBook models.OrderBook) {
 			Timestamp: orderBook.Timestamp,
 		}
 
-		d.ch <- models.ExchangeMessage{
+		ch <- models.ExchangeMessage{
 			MsgType:   models.MsgTypeBBO,
 			Symbol:    orderBook.Symbol,
 			Exchange:  Name,

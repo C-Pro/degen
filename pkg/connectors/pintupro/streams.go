@@ -24,6 +24,15 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 		once        sync.Once
 	)
 	for {
+		// Enforce at least 5 seconds between consecutive connection attempts to avoid IP ban.
+		if time.Since(connectedAt) < 5*time.Second {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5*time.Second - time.Since(connectedAt)):
+			}
+		}
+
 		if err := p.ws.Connect(ctx, wsBaseURL); err != nil {
 			log.Printf("pintupro websocket connect error: %v", err)
 			select {
@@ -52,7 +61,6 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 		p.mux.RLock()
 		if len(p.subscribedStreams) > 0 {
 			toSubscribe = slices.Clone(p.subscribedStreams)
-			p.subscribedStreams = p.subscribedStreams[:0]
 		}
 		p.mux.RUnlock()
 
@@ -69,16 +77,20 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 			}
 		}
 
-	ignore:
+		// Drain stale reconnect requests to avoid immediate reconnection.
+		for {
+			select {
+			case <-p.reconnectCh:
+			default:
+				goto drained
+			}
+		}
+	drained:
+
 		select {
 		case <-ctx.Done():
 			return
 		case reason := <-p.reconnectCh:
-			// If last connection was established less than 10 seconds ago, ignore reconnect request.
-			// To avoid reconnect loop that can lead to IP ban.
-			if time.Since(connectedAt) < time.Second*10 {
-				goto ignore
-			}
 			log.Printf("reconnecting: %s", reason)
 			p.ws.Close()
 			continue
@@ -119,6 +131,14 @@ func (p *PintuPro) SubscribeBookTickers(ctx context.Context, symbols []string) e
 		streams[i] = "aggrbook.snapshot.1." + s
 	}
 
+	p.mux.Lock()
+	for _, s := range streams {
+		if !slices.Contains(p.subscribedStreams, s) {
+			p.subscribedStreams = append(p.subscribedStreams, s)
+		}
+	}
+	p.mux.Unlock()
+
 	if err := p.subscribeStreams(ctx, streams); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
@@ -136,6 +156,14 @@ func (p *PintuPro) SubscribeBookAggTrades(ctx context.Context, symbols []string)
 		streams[i] = "trades." + s
 	}
 
+	p.mux.Lock()
+	for _, s := range streams {
+		if !slices.Contains(p.subscribedStreams, s) {
+			p.subscribedStreams = append(p.subscribedStreams, s)
+		}
+	}
+	p.mux.Unlock()
+
 	if err := p.subscribeStreams(ctx, streams); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
@@ -148,7 +176,16 @@ func (p *PintuPro) SubscribeUserBalance(ctx context.Context) error {
 		return errors.New("SubscribeUserBalance: connection is not authenticated")
 	}
 
-	if err := p.subscribeStreams(ctx, []string{"user.balance.snapshot"}); err != nil {
+	streams := []string{"user.balance.snapshot"}
+	p.mux.Lock()
+	for _, s := range streams {
+		if !slices.Contains(p.subscribedStreams, s) {
+			p.subscribedStreams = append(p.subscribedStreams, s)
+		}
+	}
+	p.mux.Unlock()
+
+	if err := p.subscribeStreams(ctx, streams); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
@@ -160,7 +197,16 @@ func (p *PintuPro) SubscribeUserTrades(ctx context.Context) error {
 		return errors.New("SubscribeUserTrades: connection is not authenticated")
 	}
 
-	if err := p.subscribeStreams(ctx, []string{"user.trades"}); err != nil {
+	streams := []string{"user.trades"}
+	p.mux.Lock()
+	for _, s := range streams {
+		if !slices.Contains(p.subscribedStreams, s) {
+			p.subscribedStreams = append(p.subscribedStreams, s)
+		}
+	}
+	p.mux.Unlock()
+
+	if err := p.subscribeStreams(ctx, streams); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
@@ -406,7 +452,16 @@ func (p *PintuPro) SubscribeUserOrders(ctx context.Context) error {
 		return errors.New("SubscribeUserOrders: connection is not authenticated")
 	}
 
-	if err := p.subscribeStreams(ctx, []string{"user.orders"}); err != nil {
+	streams := []string{"user.orders"}
+	p.mux.Lock()
+	for _, s := range streams {
+		if !slices.Contains(p.subscribedStreams, s) {
+			p.subscribedStreams = append(p.subscribedStreams, s)
+		}
+	}
+	p.mux.Unlock()
+
+	if err := p.subscribeStreams(ctx, streams); err != nil {
 		return fmt.Errorf("failed to subscribe: %w", err)
 	}
 
@@ -476,7 +531,9 @@ func (p *PintuPro) handleSubscription(msg wsMessage, _ chan<- models.ExchangeMes
 	}
 	log.Printf("subscribed to %s", sub.Channel)
 	p.mux.Lock()
-	p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
+	if !slices.Contains(p.subscribedStreams, sub.Channel) {
+		p.subscribedStreams = append(p.subscribedStreams, sub.Channel)
+	}
 	p.mux.Unlock()
 
 	return nil
@@ -628,6 +685,10 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 	defer close(ch)
 	errCnt := 0
 	rawCh := make(chan []byte, 100)
+
+	// Initialize lastReceived to now to avoid instant timeout at startup.
+	atomic.StoreInt64(&p.lastReceived, time.Now().UnixNano())
+
 	go func() {
 		for {
 			err := p.ws.Listen(rawCh)
@@ -643,7 +704,10 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 				if err != nil {
 					msg = err.Error()
 				}
-				p.reconnectCh <- msg
+				select {
+				case p.reconnectCh <- msg:
+				default:
+				}
 				// Wait for some time before listening again.
 				time.Sleep(time.Second)
 			}
@@ -656,7 +720,10 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 	for {
 	loop:
 		if errCnt > 10 {
-			p.reconnectCh <- "too many errors"
+			select {
+			case p.reconnectCh <- "too many errors":
+			default:
+			}
 			errCnt = 0
 			goto loop
 		}
@@ -664,8 +731,15 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 		select {
 		case <-ticker.C:
 			ts := atomic.LoadInt64(&p.lastReceived)
-			if time.Since(time.Unix(0, ts)) > p.idleTimeout {
-				p.reconnectCh <- fmt.Sprintf("no messages for %s", p.idleTimeout)
+			p.mux.RLock()
+			hasSubs := len(p.subscribedStreams) > 0
+			p.mux.RUnlock()
+
+			if hasSubs && time.Since(time.Unix(0, ts)) > p.idleTimeout {
+				select {
+				case p.reconnectCh <- fmt.Sprintf("no messages for %s", p.idleTimeout):
+				default:
+				}
 				time.Sleep(time.Second)
 				goto loop
 			}
@@ -704,5 +778,8 @@ func (p *PintuPro) Listen(ctx context.Context, ch chan<- models.ExchangeMessage)
 }
 
 func (p *PintuPro) RequestReconnect(reason string) {
-	p.reconnectCh <- reason
+	select {
+	case p.reconnectCh <- reason:
+	default:
+	}
 }

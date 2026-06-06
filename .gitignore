@@ -8,3 +8,5 @@ degen.sh
 *.csv
 *.tar
 *.gz
+.antigravitycli
+conductor

@@ -24,7 +24,9 @@ func (d *Dummy) SubscribeBookTickers(ctx context.Context, symbols []string) erro
 	for i, s := range symbols {
 		streams[i] = strings.ToLower(s) + "@bookTicker"
 	}
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	d.mux.Unlock()
 
 	return nil
 }
@@ -41,13 +43,17 @@ func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) er
 		streams[i] = strings.ToLower(s) + "@aggTrade"
 	}
 
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	d.mux.Unlock()
 
 	return nil
 }
 
 func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+	d.mux.Lock()
 	d.ch = ch
+	d.mux.Unlock()
 	if d.Generator != nil {
 		d.Generator(ctx, d, ch)
 		return
@@ -64,8 +70,15 @@ func (d *Dummy) DefaultRandomGenerator(ctx context.Context, ch chan<- models.Exc
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if len(d.subscribedStreams) > 0 {
-				stream := d.subscribedStreams[rand.Intn(len(d.subscribedStreams))]
+			d.mux.RLock()
+			numStreams := len(d.subscribedStreams)
+			var stream string
+			if numStreams > 0 {
+				stream = d.subscribedStreams[rand.Intn(numStreams)]
+			}
+			d.mux.RUnlock()
+
+			if stream != "" {
 				parts := strings.Split(stream, "@")
 				switch parts[1] {
 				case "bookTicker":
@@ -152,22 +165,30 @@ func (d *Dummy) DefaultRandomGenerator(ctx context.Context, ch chan<- models.Exc
 }
 
 func (d *Dummy) SubscribeUserBalance(ctx context.Context) error {
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, StreamBalances)
+	d.mux.Unlock()
 	return nil
 }
 
 func (d *Dummy) SubscribeUserOrders(ctx context.Context) error {
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, StreamOrders)
+	d.mux.Unlock()
 	return nil
 }
 
 func (d *Dummy) SubscribeUserTrades(ctx context.Context) error {
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, StreamTrades)
+	d.mux.Unlock()
 	return nil
 }
 
 func (d *Dummy) SubscribeUserPositions(ctx context.Context) error {
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, StreamPositions)
+	d.mux.Unlock()
 	return nil
 }
 
