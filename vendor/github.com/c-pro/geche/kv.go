@@ -113,12 +113,235 @@ func NewKV[V any](
 	return &kv
 }
 
+func (kv *KV[V]) SetIfPresent(key string, value V) (V, bool) {
+	kv.mux.Lock()
+	defer kv.mux.Unlock()
+
+	previousVal, err := kv.data.Get(key)
+	if err == nil {
+		kv.set(key, value)
+		return previousVal, true
+	}
+
+	return previousVal, false
+}
+
+func (kv *KV[V]) SetIfAbsent(key string, value V) (V, bool) {
+	kv.mux.Lock()
+	defer kv.mux.Unlock()
+
+	previousVal, err := kv.data.Get(key)
+	if err == nil {
+		return previousVal, false
+	}
+
+	kv.set(key, value)
+	return previousVal, true
+}
+
 // Set key-value pair while updating the trie.
 // Panics if key is empty.
 func (kv *KV[V]) Set(key string, value V) {
 	kv.mux.Lock()
 	defer kv.mux.Unlock()
 
+	kv.set(key, value)
+}
+
+func commonPrefixLen(a, b []byte) int {
+	i := 0
+	for ; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+
+	return i
+}
+
+// Depth First Search starts with last node of the key prefix and traverses the trie,
+// appending all terminal nodes to the result.
+func (kv *KV[V]) dfs(node *trieNode, prefix []byte) ([]V, error) {
+	res := []V{}
+	key := make([]byte, len(prefix), maxKeyLength)
+	copy(key, prefix)
+
+	// If last node of the prefix is terminal, add it to the result.
+	if node.terminal {
+		val, err := kv.data.Get(string(prefix))
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, val)
+	}
+
+	// If the node does not contain any descendants, return.
+	if node.nextLevelHead == nil {
+		return res, nil
+	}
+
+	// Instead of recursive DFS, we use stack-based approach.
+	stack := make([]*trieNode, 0, maxKeyLength)
+	stack = append(stack, node.nextLevelHead)
+	var (
+		top       *trieNode
+		prevDepth int
+		err       error
+		val       V
+	)
+	for len(stack) > 0 {
+		// Pop the top node from the stack.
+		top = stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if top.d > prevDepth {
+			// We have descended to the next level.
+			key = append(key, top.b...)
+		} else if top.d < prevDepth {
+			// We have ascended to the previous level.
+			key = key[:top.d]
+			key[len(key)-1] = top.b[0]
+			if len(top.b) > 1 {
+				key = append(key, top.b[1:]...)
+			}
+		} else {
+			key = key[:top.d]
+			key[len(key)-1] = top.b[0]
+			if len(top.b) > 1 {
+				key = append(key, top.b[1:]...)
+			}
+		}
+		prevDepth = top.d
+
+		if top.terminal {
+			val, err = kv.data.Get(string(key))
+			if err != nil {
+				return nil, err
+			}
+			res = append(res, val)
+		}
+
+		// Appending next node of the level to the stack.
+		if top.next != nil {
+			stack = append(stack, top.next)
+		}
+
+		// Appending next level head to the top of the stack.
+		if top.nextLevelHead != nil {
+			stack = append(stack, top.nextLevelHead)
+		}
+	}
+
+	return res, nil
+}
+
+func (kv *KV[V]) ListByPrefix(prefix string) ([]V, error) {
+	kv.mux.RLock()
+	defer kv.mux.RUnlock()
+
+	node := kv.trie
+	for i := 0; i < len(prefix); i++ {
+		next := node.down[prefix[i]]
+		if next == nil {
+			return nil, nil
+		}
+		// If we reached a multibyte tail node, we can return its value,
+		// since tail nodes have no descendants.
+		if len(next.b) > 1 && len(next.b) >= len(prefix)-i {
+			if bytes.Equal(next.b[:len(prefix)-i], []byte(prefix)[i:]) {
+				v, err := kv.data.Get(prefix + string(next.b[len(prefix)-i:]))
+				return []V{v}, err
+			}
+		}
+		node = next
+	}
+
+	return kv.dfs(node, []byte(prefix))
+}
+
+// Get value by key from the underlying cache.
+func (kv *KV[V]) Get(key string) (V, error) {
+	return kv.data.Get(key)
+}
+
+// Del key from the underlying cache.
+func (kv *KV[V]) Del(key string) error {
+	kv.mux.Lock()
+	defer kv.mux.Unlock()
+
+	node := kv.trie
+	stack := []*trieNode{}
+	found := false
+	for i := 0; i < len(key); i++ {
+		next := node.down[key[i]]
+		if next == nil {
+			// If we are here, the key does not exist.
+			return kv.data.Del(key)
+		}
+
+		stack = append(stack, node)
+		node = next
+		if bytes.Equal(node.b, []byte(key)[i:]) {
+			if node.terminal {
+				found = true
+			}
+			break
+		}
+	}
+
+	if !found {
+		// If we are here, the key does not exist.
+		return kv.data.Del(key)
+	}
+
+	node.terminal = false
+
+	// Go back the stack removing nodes with no descendants.
+	for i := len(stack) - 1; i >= 0; i-- {
+		prev := stack[i]
+		stack = stack[:i]
+		if node.nextLevelHead == nil {
+			head, empty := prev.nextLevelHead.removeFromList(node.b[0])
+			if head != nil || empty {
+				prev.nextLevelHead = head
+			}
+			delete(prev.down, node.b[0])
+		}
+
+		if prev.terminal || len(prev.down) > 0 && prev == kv.trie {
+			break
+		}
+
+		node = prev
+	}
+
+	return kv.data.Del(key)
+}
+
+// Snapshot returns a shallow copy of the cache data.
+// Sequentially locks each of she undelnying shards
+// from modification for the duration of the copy.
+func (kv *KV[V]) Snapshot() map[string]V {
+	return kv.data.Snapshot()
+}
+
+// Len returns total number of elements in the underlying caches.
+func (kv *KV[V]) Len() int {
+	return kv.data.Len()
+}
+
+// Clear removes all elements from the cache and resets the trie.
+func (kv *KV[V]) Clear() {
+	kv.mux.Lock()
+	defer kv.mux.Unlock()
+
+	kv.data.Clear()
+	kv.trie = &trieNode{
+		down: make(map[byte]*trieNode),
+	}
+}
+
+func (kv *KV[V]) set(key string, value V) {
 	kv.data.Set(key, value)
 
 	if key == "" {
@@ -231,190 +454,4 @@ func (kv *KV[V]) Set(key string, value V) {
 	}
 
 	node.terminal = true
-}
-
-func commonPrefixLen(a, b []byte) int {
-	i := 0
-	for ; i < len(a) && i < len(b); i++ {
-		if a[i] != b[i] {
-			return i
-		}
-	}
-
-	return i
-}
-
-// Depth First Search starts with last node of the key prefix and traverses the trie,
-// appending all terminal nodes to the result.
-func (kv *KV[V]) dfs(node *trieNode, prefix []byte) ([]V, error) {
-	res := []V{}
-	key := make([]byte, len(prefix), maxKeyLength)
-	copy(key, prefix)
-
-	// If last node of the prefix is terminal, add it to the result.
-	if node.terminal {
-		val, err := kv.data.Get(string(prefix))
-		if err != nil {
-			return nil, err
-		}
-		res = append(res, val)
-	}
-
-	// If the node does not contain any descendants, return.
-	if node.nextLevelHead == nil {
-		return res, nil
-	}
-
-	// Instead of recursive DFS, we use stack-based approach.
-	stack := make([]*trieNode, 0, maxKeyLength)
-	stack = append(stack, node.nextLevelHead)
-	var (
-		top       *trieNode
-		prevDepth int
-		err       error
-		val       V
-	)
-	for {
-		if len(stack) == 0 {
-			break
-		}
-
-		// Pop the top node from the stack.
-		top = stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		if top.d > prevDepth {
-			// We have descended to the next level.
-			key = append(key, top.b...)
-		} else if top.d < prevDepth {
-			// We have ascended to the previous level.
-			key = key[:top.d]
-			key[len(key)-1] = top.b[0]
-			if len(top.b) > 1 {
-				key = append(key, top.b[1:]...)
-			}
-		} else {
-			key = key[:top.d]
-			key[len(key)-1] = top.b[0]
-			if len(top.b) > 1 {
-				key = append(key, top.b[1:]...)
-			}
-		}
-		prevDepth = top.d
-
-		if top.terminal {
-			val, err = kv.data.Get(string(key))
-			if err != nil {
-				return nil, err
-			}
-			res = append(res, val)
-		}
-
-		// Appending next node of the level to the stack.
-		if top.next != nil {
-			stack = append(stack, top.next)
-		}
-
-		// Appending next level head to the top of the stack.
-		if top.nextLevelHead != nil {
-			stack = append(stack, top.nextLevelHead)
-		}
-	}
-
-	return res, nil
-}
-
-func (kv *KV[V]) ListByPrefix(prefix string) ([]V, error) {
-	kv.mux.RLock()
-	defer kv.mux.RUnlock()
-
-	node := kv.trie
-	for i := 0; i < len(prefix); i++ {
-		next := node.down[prefix[i]]
-		if next == nil {
-			return nil, nil
-		}
-		// If we reached a multibyte tail node, we can return its value,
-		// since tail nodes have no descendants.
-		if len(next.b) > 1 && len(next.b) >= len(prefix)-i {
-			if bytes.Equal(next.b[:len(prefix)-i], []byte(prefix)[i:]) {
-				v, err := kv.data.Get(prefix + string(next.b[len(prefix)-i:]))
-				return []V{v}, err
-			}
-		}
-		node = next
-	}
-
-	return kv.dfs(node, []byte(prefix))
-}
-
-// Get value by key from the underlying cache.
-func (kv *KV[V]) Get(key string) (V, error) {
-	return kv.data.Get(key)
-}
-
-// Del key from the underlying cache.
-func (kv *KV[V]) Del(key string) error {
-	kv.mux.Lock()
-	defer kv.mux.Unlock()
-
-	node := kv.trie
-	stack := []*trieNode{}
-	found := false
-	for i := 0; i < len(key); i++ {
-		next := node.down[key[i]]
-		if next == nil {
-			// If we are here, the key does not exist.
-			return kv.data.Del(key)
-		}
-
-		stack = append(stack, node)
-		node = next
-		if bytes.Equal(node.b, []byte(key)[i:]) {
-			if node.terminal {
-				found = true
-			}
-			break
-		}
-	}
-
-	if !found {
-		// If we are here, the key does not exist.
-		return kv.data.Del(key)
-	}
-	
-	node.terminal = false
-
-	// Go back the stack removing nodes with no descendants.
-	for i := len(stack) - 1; i >= 0; i-- {
-		prev := stack[i]
-		stack = stack[:i]
-		if node.nextLevelHead == nil {
-			head, empty := prev.nextLevelHead.removeFromList(node.b[0])
-			if head != nil || (head == nil && empty) {
-				prev.nextLevelHead = head
-			}
-			delete(prev.down, node.b[0])
-		}
-
-		if prev.terminal || len(prev.down) > 0 && prev == kv.trie {
-			break
-		}
-
-		node = prev
-	}
-
-	return kv.data.Del(key)
-}
-
-// Snapshot returns a shallow copy of the cache data.
-// Sequentially locks each of she undelnying shards
-// from modification for the duration of the copy.
-func (kv *KV[V]) Snapshot() map[string]V {
-	return kv.data.Snapshot()
-}
-
-// Len returns total number of elements in the underlying caches.
-func (kv *KV[V]) Len() int {
-	return kv.data.Len()
 }

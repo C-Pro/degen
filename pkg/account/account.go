@@ -39,7 +39,7 @@ type Account struct {
 	id        string
 	balances  map[string]models.Balance
 	positions map[string]*positionStructure
-	orders    *geche.KV[models.Order]
+	orders    *geche.KVCache[string, models.Order]
 	interest  map[string]*openInterest
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -56,7 +56,7 @@ func NewAccount(id string, api exchange) (*Account, error) {
 		exchange:  api,
 		balances:  make(map[string]models.Balance),
 		positions: make(map[string]*positionStructure),
-		orders:    geche.NewKV(geche.NewMapCache[string, models.Order]()),
+		orders:    geche.NewKVCache[string, models.Order](),
 		interest:  make(map[string]*openInterest),
 		errCh:     make(chan error),
 		updCh:     make(chan models.ExchangeMessage, 100),
