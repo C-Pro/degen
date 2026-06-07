@@ -3,7 +3,7 @@ package dummy
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand" // nosemgrep
 	"strings"
 	"time"
 

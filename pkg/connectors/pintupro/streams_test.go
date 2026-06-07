@@ -43,7 +43,7 @@ func TestPintuProReconnectionAndSubscriptions(t *testing.T) {
 			t.Errorf("Upgrade failed: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		for {
 			_, msg, err := conn.ReadMessage()
@@ -62,7 +62,8 @@ func TestPintuProReconnectionAndSubscriptions(t *testing.T) {
 				continue
 			}
 
-			if envelope.Method == "public/auth" {
+			switch envelope.Method {
+			case "public/auth":
 				atomic.AddInt64(&authCount, 1)
 				// Respond with success
 				resp := wsMessage{
@@ -73,7 +74,7 @@ func TestPintuProReconnectionAndSubscriptions(t *testing.T) {
 				}
 				b, _ := json.Marshal(resp)
 				_ = conn.WriteMessage(websocket.TextMessage, b)
-			} else if envelope.Method == "subscribe" {
+			case "subscribe":
 				atomic.AddInt64(&subscribeCount, 1)
 				for _, ch := range envelope.Params.Channels {
 					mu.Lock()
@@ -99,7 +100,7 @@ func TestPintuProReconnectionAndSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	s := &http.Server{Handler: http.HandlerFunc(handler)}
 	go func() {

@@ -27,10 +27,11 @@ type WS struct {
 }
 
 func (ws *WS) Connect(ctx context.Context, url string) error {
-	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
+	conn, resp, err := websocket.DefaultDialer.Dial(url, nil) // nosemgrep
 	if err != nil {
 		if resp != nil {
 			body, errR := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
 			if errR != nil {
 				return fmt.Errorf("failed to read websocket connect response: %w", err)
 			}
@@ -145,6 +146,6 @@ func (ws *WS) Close() {
 		ws.connCancel()
 	}
 	if ws.conn != nil {
-		ws.conn.Close()
+		_ = ws.conn.Close()
 	}
 }

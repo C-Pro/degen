@@ -19,7 +19,7 @@ func serve(ctx context.Context, t *testing.T) http.HandlerFunc {
 			t.Errorf("upgrade: %v", err)
 			return
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		for {
 			mt, message, err := c.ReadMessage()
 			if err != nil {

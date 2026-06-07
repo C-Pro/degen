@@ -112,7 +112,7 @@ func (api *API) callPrivate(
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
 		return err
@@ -143,7 +143,7 @@ func (api *API) callPublic(
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
 		return err

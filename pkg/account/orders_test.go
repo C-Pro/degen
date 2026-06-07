@@ -567,11 +567,11 @@ func TestOpenInterest_Getters(t *testing.T) {
 
 		gotBids := oiSamePrice.GetBids()
 		// Expected: b3_higher (101), then b1_same/b2_same (100) in some order.
-		if !(len(gotBids) == 3 && gotBids[0].ClientOrderID == "b3_higher") {
+		if len(gotBids) != 3 || gotBids[0].ClientOrderID != "b3_higher" {
 			t.Errorf("GetBids() with same prices, highest price not first. Got: %+v", gotBids)
 		}
-		if !((gotBids[1].ClientOrderID == "b1_same" && gotBids[2].ClientOrderID == "b2_same") ||
-			(gotBids[1].ClientOrderID == "b2_same" && gotBids[2].ClientOrderID == "b1_same")) {
+		if (gotBids[1].ClientOrderID != "b1_same" || gotBids[2].ClientOrderID != "b2_same") &&
+			(gotBids[1].ClientOrderID != "b2_same" || gotBids[2].ClientOrderID != "b1_same") {
 			t.Errorf("GetBids() with same prices, orders with same price not present as expected. Got: %+v", gotBids)
 		}
 		if !(gotBids[1].Price.Equal(gotBids[2].Price)) {

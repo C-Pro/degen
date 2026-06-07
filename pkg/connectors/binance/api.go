@@ -54,7 +54,7 @@ func (api *API) GetListenKey(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("binance.GetListenKey failed perform request: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var respData listenKeyResp
 
 	b, err := io.ReadAll(resp.Body)
@@ -108,7 +108,7 @@ func (api *API) GetAccountInfo(ctx context.Context) (*models.AccountInfo, error)
 		return nil, fmt.Errorf("binance.GetAccountInfo failed perform request: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var respData accountInfoResp
 
 	b, err := io.ReadAll(resp.Body)

@@ -412,10 +412,7 @@ func toOrder(o orderStatusMsg) (models.Order, error) {
 		return models.Order{}, fmt.Errorf("invalid symbol: %s", o.Symbol)
 	}
 
-	final := false
-	if otype == models.OrderTypeMarket && timeInForce == models.TimeInForceIOC {
-		final = true
-	}
+	final := otype == models.OrderTypeMarket && timeInForce == models.TimeInForceIOC
 
 	if otype == models.OrderTypeLimit &&
 		(status == models.OrderStatusFilled ||

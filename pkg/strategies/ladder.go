@@ -190,12 +190,6 @@ func (m *Ladder) askSpreadPenalty() decimal.Decimal {
 	return penalty
 }
 
-func (m *Ladder) calcOrderSize(
-	notional decimal.Decimal,
-	bbo decimal.Decimal,
-) decimal.Decimal {
-	return m.quantizeOrderSize(notional.Div(bbo))
-}
 
 func (m *Ladder) quantizeOrderSize(
 	size decimal.Decimal,

@@ -63,9 +63,9 @@ func orderKey(order models.Order) string {
 
 func (d *Dummy) SetOrder(order models.Order) {
 	if order.Final {
-		d.orders.Del(orderKey(order))
+		_ = d.orders.Del(orderKey(order))
 		if order.ClientOrderID != "" {
-			d.ordersByClientID.Del(order.ClientOrderID)
+			_ = d.ordersByClientID.Del(order.ClientOrderID)
 		}
 	} else {
 		d.orders.Set(orderKey(order), order)
@@ -90,7 +90,7 @@ func (d *Dummy) SetOrder(order models.Order) {
 func (d *Dummy) SetBalance(balance models.Balance, asset string) {
 	d.balances.Set(asset, balance)
 	if balance.Total.IsZero() {
-		d.balances.Del(asset)
+		_ = d.balances.Del(asset)
 	}
 	d.mux.RLock()
 	subscribed := slices.Contains(d.subscribedStreams, StreamBalances)
@@ -109,7 +109,7 @@ func (d *Dummy) SetBalance(balance models.Balance, asset string) {
 func (d *Dummy) SetPosition(position models.Position, symbol string) {
 	d.positions.Set(symbol, position)
 	if position.Amount.IsZero() {
-		d.positions.Del(symbol)
+		_ = d.positions.Del(symbol)
 	}
 	d.mux.RLock()
 	subscribed := slices.Contains(d.subscribedStreams, StreamPositions)

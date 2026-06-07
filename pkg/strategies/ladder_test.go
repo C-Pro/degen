@@ -345,12 +345,13 @@ func TestLadder_See_BBO(t *testing.T) {
 	} else {
 		var hasBid, hasAsk bool
 		for _, o := range openOrders {
-			if o.Side == models.OrderSideBuy {
+			switch o.Side {
+			case models.OrderSideBuy:
 				hasBid = true
 				if !o.Price.Equal(decimal.NewFromFloat(94.05)) {
 					t.Errorf("expected bid price 94.05, got %s", o.Price)
 				}
-			} else if o.Side == models.OrderSideSell {
+			case models.OrderSideSell:
 				hasAsk = true
 				if !o.Price.Equal(decimal.NewFromFloat(95.95)) {
 					t.Errorf("expected ask price 95.95, got %s", o.Price)

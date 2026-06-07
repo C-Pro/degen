@@ -21,7 +21,6 @@ var (
 	theSymbol     = "WLD-IDR"
 	theAsset      = "IDR"
 	orderNotional = decimal.NewFromFloat(150000)
-	spread        = decimal.NewFromFloat(0.001)
 
 	maxOrderNotional = decimal.NewFromFloat(1000000)
 )
@@ -48,14 +47,6 @@ func main() {
 		}
 	}
 
-	if os.Getenv("SPREAD") != "" {
-		var err error
-		spread, err = decimal.NewFromString(os.Getenv("SPREAD"))
-		if err != nil {
-			log.Printf("failed to parse SPREAD: %v\n", err)
-			return
-		}
-	}
 
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
@@ -111,7 +102,7 @@ func main() {
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
+		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed { // nosemgrep
 			log.Printf("HTTP server stopped with error: %v", err)
 		}
 	}()

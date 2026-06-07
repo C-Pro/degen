@@ -637,9 +637,15 @@ func TestAccount_StreamProcessing(t *testing.T) {
 	}
 
 	// Subscribe to internal dummy streams so it emits messages.
-	d.SubscribeUserBalance(ctx)
-	d.SubscribeUserPositions(ctx)
-	d.SubscribeUserOrders(ctx)
+	if err := d.SubscribeUserBalance(ctx); err != nil {
+		t.Fatalf("failed to subscribe to user balance: %v", err)
+	}
+	if err := d.SubscribeUserPositions(ctx); err != nil {
+		t.Fatalf("failed to subscribe to user positions: %v", err)
+	}
+	if err := d.SubscribeUserOrders(ctx); err != nil {
+		t.Fatalf("failed to subscribe to user orders: %v", err)
+	}
 
 	if err := acc.Start(ctx); err != nil {
 		t.Fatalf("failed to start account: %v", err)

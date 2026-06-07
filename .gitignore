@@ -10,3 +10,4 @@ degen.sh
 *.gz
 .antigravitycli
 conductor
+coverage.out

@@ -168,7 +168,7 @@ func (a *Account) UpdateBalance(
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	metrics.RecordAssetBalance(a.exchange.Name(), asset, balance.InexactFloat64())
+	metrics.RecordAssetBalance(a.Name(), asset, balance.InexactFloat64())
 
 	a.balances[asset] = models.Balance{
 		Total:     balance,
@@ -242,7 +242,7 @@ func (a *Account) UpdatePosition(
 		Timestamp: updatedAt,
 	})
 
-	metrics.RecordPosition(a.exchange.Name(), symbol, pos.Position())
+	metrics.RecordPosition(a.Name(), symbol, pos.Position())
 }
 
 func orderKey(order models.Order) string {
@@ -256,7 +256,7 @@ func (a *Account) UpdateOrder(order models.Order) {
 		log.Printf("Order time to book: %s\n", order.CreatedAt.Sub(existing.PlacedAt))
 		log.Printf("Order e2e time: %s\n", order.UpdatedAt.Sub(existing.PlacedAt))
 		metrics.RecordPlaceOrderDuration(
-			a.exchange.Name(),
+			a.Name(),
 			existing.PlacedAt,
 		)
 	}
@@ -370,7 +370,7 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 		if !ok {
 			return fmt.Errorf("invalid payload type %T for MsgType %q", upd.Payload, upd.MsgType)
 		}
-		metrics.RecordBBO(a.exchange.Name(), upd.Symbol, bbo)
+		metrics.RecordBBO(a.Name(), upd.Symbol, bbo)
 		position, ok := a.positions[upd.Symbol]
 		if ok && !position.totalSize.IsZero() {
 			position := position.Position()
@@ -379,7 +379,7 @@ func (a *Account) Update(upd models.ExchangeMessage) error {
 				price = bbo.Bid.Price
 			}
 			metrics.RecordUnrealizedPnL(
-				a.exchange.Name(),
+				a.Name(),
 				upd.Symbol,
 				position.UnrealizedPnL(price).InexactFloat64(),
 			)
@@ -430,7 +430,7 @@ func (a *Account) CancelAllOrders(ctx context.Context, symbol string) error {
 func (a *Account) syncOrders(ctx context.Context, symbol string) error {
 	orders, _ := a.orders.ListByPrefix(symbol + ":")
 	for _, o := range orders {
-		order, err := a.exchange.GetOrderDetails(ctx, o)
+		order, err := a.GetOrderDetails(ctx, o)
 		if err != nil {
 			return fmt.Errorf("failed to get order details: %w", err)
 		}
@@ -450,6 +450,6 @@ func (a *Account) SyncWithExchange(ctx context.Context, symbols []string) error 
 			return fmt.Errorf("failed to sync orders: %w", err)
 		}
 	}
-	a.exchange.RequestReconnect("sync state")
+	a.RequestReconnect("sync state")
 	return nil
 }
