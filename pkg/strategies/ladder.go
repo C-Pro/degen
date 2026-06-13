@@ -93,8 +93,6 @@ func (l *LadderConfig) IdealAllocation(
 	return orders
 }
 
-
-
 // Ladder is a market maker that follows
 // the current midprice and places orders with defined spread.
 type Ladder struct {
@@ -141,6 +139,10 @@ func NewLadder(
 
 // cap spread penalty at 5%
 const spreadPenaltyClamp = 0.05
+
+// maxOpenOrders is the safety threshold above which the strategy cancels all
+// resting orders for the symbol and skips the tick.
+const maxOpenOrders = 20
 
 // bidSpreadPenalty returns extra spread that should be added to the bid side
 // midprice deviation if total bid size is higher than total ask size.
@@ -190,7 +192,6 @@ func (m *Ladder) askSpreadPenalty() decimal.Decimal {
 	return penalty
 }
 
-
 func (m *Ladder) quantizeOrderSize(
 	size decimal.Decimal,
 ) decimal.Decimal {
@@ -226,7 +227,10 @@ func (m *Ladder) GetDesiredOrders(
 	case 1:
 		// We are long. Don't want to close at lower price.
 		// Adjust asks to be above min reduce price.
-		if ideal.Asks[0][0].LessThan(minReducePrice) {
+		// IdealAllocation can return an empty ask side (e.g. zero base balance
+		// while still holding a long position because balance and position
+		// arrive on separate streams), so guard the index access. [C4]
+		if len(ideal.Asks) > 0 && ideal.Asks[0][0].LessThan(minReducePrice) {
 			diff := minReducePrice.Sub(ideal.Asks[0][0])
 			for i := range ideal.Asks {
 				ideal.Asks[i][0] = ideal.Asks[i][0].Add(diff)
@@ -235,7 +239,7 @@ func (m *Ladder) GetDesiredOrders(
 	case -1:
 		// We are short. Don't want to close at larger price.
 		// Adjust bids to be below min reduce price.
-		if ideal.Bids[0][0].GreaterThan(minReducePrice) {
+		if len(ideal.Bids) > 0 && ideal.Bids[0][0].GreaterThan(minReducePrice) {
 			diff := ideal.Bids[0][0].Sub(minReducePrice)
 			for i := range ideal.Bids {
 				ideal.Bids[i][0] = ideal.Bids[i][0].Sub(diff)
@@ -285,25 +289,25 @@ func (m *Ladder) See(e models.ExchangeMessage) {
 
 		orders := m.acc.GetOpenOrders(m.symbol.Symbol)
 
+		// Safety valve: if we somehow accumulated too many open orders, cancel
+		// them all and skip this tick. CancelAllOrders purges local tracking
+		// immediately, so the count reflects reality on the next tick and we
+		// don't re-enter this branch every tick. We no longer call the blocking
+		// SyncWithExchange (1s sleep + forced reconnect) on this hot path. [H10, M4]
+		if len(orders) > maxOpenOrders {
+			log.Printf("too many open orders (%d), cancelling all", len(orders))
+			if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
+				log.Printf("failed to cancel all orders: %v\n", err)
+			}
+			return
+		}
+
 		var bids, asks []models.Order
 		for _, o := range orders {
 			if o.Side == models.OrderSideBuy {
 				bids = append(bids, o)
 			} else {
 				asks = append(asks, o)
-			}
-		}
-
-		// Hack to prevent too many orders.
-		if len(orders) > 20 {
-			if err := m.acc.SyncWithExchange(context.Background(), []string{m.symbol.Symbol}); err != nil {
-				log.Printf("failed to sync with exchange: %v\n", err)
-			}
-			if err := m.acc.CancelAllOrders(context.Background(), m.symbol.Symbol); err != nil {
-				log.Printf("failed to cancel all orders: %v\n", err)
-			} else {
-				bids = nil
-				asks = nil
 			}
 		}
 

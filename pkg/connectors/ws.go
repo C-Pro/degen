@@ -87,9 +87,13 @@ func (ws *WS) startWriteLoop(conn *websocket.Conn, connCtx context.Context, writ
 }
 
 func (ws *WS) Listen(ch chan<- []byte) error {
+	// Capture this connection generation's conn/ctx/cancel together. On a read
+	// error we must cancel THIS generation only — reading ws.connCancel fresh
+	// could cancel a newer connection installed by a concurrent reconnect. [H1]
 	ws.mu.RLock()
 	conn := ws.conn
 	connCtx := ws.connCtx
+	connCancel := ws.connCancel
 	ws.mu.RUnlock()
 
 	if conn == nil {
@@ -99,22 +103,20 @@ func (ws *WS) Listen(ch chan<- []byte) error {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			ws.mu.Lock()
-			if ws.connCancel != nil {
-				ws.connCancel()
+			if connCancel != nil {
+				connCancel()
 			}
-			ws.mu.Unlock()
 			return fmt.Errorf("websocket.Read error: %v", err)
 		}
 
 		// log.Printf("WS IN: %s", string(msg))
 
-		ch <- msg
-
+		// Use a selectable send so a slow/stalled consumer cannot park this
+		// goroutine forever and ignore connection cancellation. [#34]
 		select {
+		case ch <- msg:
 		case <-connCtx.Done():
 			return conn.Close()
-		default:
 		}
 	}
 }

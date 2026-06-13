@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,6 +21,37 @@ import (
 
 const contentType = "application/json"
 
+const (
+	// readTimeout bounds idempotent read requests.
+	readTimeout = 3 * time.Second
+	// orderTimeout bounds order-mutating requests. It is deliberately more
+	// generous than reads: a place/cancel that actually executes on the
+	// exchange but responds slowly must not be aborted client-side and then
+	// assumed not to have happened. [H8]
+	orderTimeout = 5 * time.Second
+)
+
+// orderMutating reports whether a method places/cancels orders (non-idempotent).
+func orderMutating(method string) bool {
+	switch method {
+	case "private/place-order", "private/cancel-order", "private/cancel-all-orders":
+		return true
+	}
+
+	return false
+}
+
+// checkHTTPStatus turns a non-2xx HTTP response into an error so that gateway
+// errors (429/5xx, HTML bodies) are not silently decoded as an empty success. [L6]
+func checkHTTPStatus(resp *http.Response) error {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("unexpected HTTP status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return nil
+}
+
 type API struct {
 	key     string
 	secret  string
@@ -33,7 +65,9 @@ func NewAPI(key, secret, baseURL string) *API {
 		secret:  secret,
 		baseURL: baseURL,
 		cl: http.Client{
-			Timeout: 1 * time.Second,
+			// Generous backstop only; the real per-call deadline is applied via
+			// context in call() so reads and order mutations can differ. [H8]
+			Timeout: 15 * time.Second,
 		},
 	}
 }
@@ -62,6 +96,7 @@ type accountInfoResponse struct {
 }
 
 func (api *API) call(
+	ctx context.Context,
 	method string,
 	params any,
 	dest any,
@@ -72,17 +107,28 @@ func (api *API) call(
 		return fmt.Errorf("pintupro.call: invalid method %q", method)
 	}
 
+	// Apply a per-call deadline (honoring any earlier deadline on ctx) so the
+	// context is actually respected and order mutations get a longer budget
+	// than reads. [L7][H8]
+	timeout := readTimeout
+	if orderMutating(method) {
+		timeout = orderTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	switch parts[0] {
 	case "private":
-		return api.callPrivate(method, params, dest)
+		return api.callPrivate(ctx, method, params, dest)
 	case "public":
-		return api.callPublic(method, params, dest)
+		return api.callPublic(ctx, method, params, dest)
 	default:
 		return fmt.Errorf("pintupro.call: unknown method prefix %q", method)
 	}
 }
 
 func (api *API) callPrivate(
+	ctx context.Context,
 	method string,
 	params any,
 	dest any,
@@ -100,19 +146,26 @@ func (api *API) callPrivate(
 		return err
 	}
 
-	// fmt.Println(string(b))
-
-	body := bytes.NewReader(b)
 	apiURL, err := url.JoinPath(api.baseURL, "v1", method)
 	if err != nil {
 		return err
 	}
 
-	resp, err := api.cl.Post(apiURL, contentType, body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+
+	resp, err := api.cl.Do(httpReq)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if err := checkHTTPStatus(resp); err != nil {
+		return err
+	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
 		return err
@@ -122,6 +175,7 @@ func (api *API) callPrivate(
 }
 
 func (api *API) callPublic(
+	ctx context.Context,
 	method string,
 	paramsAny any,
 	dest any,
@@ -139,11 +193,20 @@ func (api *API) callPublic(
 	u.RawQuery = params.Encode()
 	log.Println(u.String())
 
-	resp, err := api.cl.Get(u.String())
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := api.cl.Do(httpReq)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if err := checkHTTPStatus(resp); err != nil {
+		return err
+	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
 		return err
@@ -152,12 +215,12 @@ func (api *API) callPublic(
 	return nil
 }
 
-func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
+func (api *API) GetAccountInfo(ctx context.Context) (*models.AccountInfo, error) {
 	var accountInfo accountInfoResponse
 	resp := responseMessage{
 		Data: &accountInfo,
 	}
-	if err := api.call("private/get-account-information", nil, &resp); err != nil {
+	if err := api.call(ctx, "private/get-account-information", nil, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.GetAccountInfo: %w", err)
 	}
 
@@ -175,8 +238,16 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 	}
 
 	for asset, rec := range accountInfo.Assets {
-		balance, _ := decimal.NewFromString(rec.Balance)
-		available, _ := decimal.NewFromString(rec.Available)
+		// Do not silently swallow parse errors: log them so a malformed/empty
+		// balance string is visible rather than masquerading as zero. [M10]
+		balance, err := decimal.NewFromString(rec.Balance)
+		if err != nil {
+			log.Printf("pintupro.GetAccountInfo: bad balance %q for %s: %v", rec.Balance, asset, err)
+		}
+		available, err := decimal.NewFromString(rec.Available)
+		if err != nil {
+			log.Printf("pintupro.GetAccountInfo: bad available %q for %s: %v", rec.Available, asset, err)
+		}
 
 		result.Balances[asset] = models.Balance{
 			Total:     balance,
@@ -185,7 +256,7 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 		}
 
 		// Treating spot asset balances as long positions.
-		bbo, err := api.GetBBO(context.Background(), asset+"-IDR")
+		bbo, err := api.GetBBO(ctx, asset+"-IDR")
 		if err != nil {
 			// If we can't get the BBO, just skip this asset.
 			continue
@@ -207,7 +278,7 @@ func (api *API) GetAccountInfo(_ context.Context) (*models.AccountInfo, error) {
 
 // GetBBO returns the order book BBO for the given symbol.
 func (api *API) GetBBO(
-	_ context.Context,
+	ctx context.Context,
 	symbol string,
 ) (*models.BBO, error) {
 	params := url.Values{}
@@ -218,7 +289,7 @@ func (api *API) GetBBO(
 	resp := responseMessage{
 		Data: &ob,
 	}
-	if err := api.call("public/get-book", params, &resp); err != nil {
+	if err := api.call(ctx, "public/get-book", params, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.GetBBO: %w", err)
 	}
 
@@ -262,12 +333,12 @@ type symbolsReferenceResponse struct {
 	} `json:"symbols"`
 }
 
-func (api *API) GetSymbols(_ context.Context) (map[string]models.SymbolInfo, error) {
+func (api *API) GetSymbols(ctx context.Context) (map[string]models.SymbolInfo, error) {
 	var data symbolsReferenceResponse
 	resp := responseMessage{
 		Data: &data,
 	}
-	if err := api.call("public/get-symbols-reference", nil, &resp); err != nil {
+	if err := api.call(ctx, "public/get-symbols-reference", nil, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.GetSymbols: %w", err)
 	}
 

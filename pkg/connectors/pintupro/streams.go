@@ -42,9 +42,17 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 				continue
 			}
 		}
+		// Record the dial time immediately so the 5s anti-IP-ban guard applies
+		// even when auth/subscribe below fail and we loop, instead of hammering
+		// the exchange roughly once per second. [M7]
+		connectedAt = time.Now()
+
 		if p.key != "" {
 			if err := p.auth(ctx); err != nil {
 				log.Printf("pintupro auth write error: %v", err)
+				// Close the connection we just opened before retrying so we
+				// don't leak the socket and its write-loop goroutine. [M8]
+				p.ws.Close()
 				select {
 				case <-ctx.Done():
 					return
@@ -53,8 +61,7 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 				}
 			}
 		}
-		// Connected. Subscribe to streams.
-		connectedAt = time.Now()
+		// Connected and authenticated.
 		once.Do(func() { close(p.wsReady) })
 
 		var toSubscribe []string
@@ -68,6 +75,7 @@ func (p *PintuPro) wsReconnectLoop(ctx context.Context, wsBaseURL string) {
 			log.Printf("pintupro: subscribing: %q", strings.Join(toSubscribe, ","))
 			if err := p.subscribeStreams(ctx, toSubscribe); err != nil {
 				log.Printf("pintupro websocket subscribe error: %v", err)
+				p.ws.Close() // [M8]
 				select {
 				case <-ctx.Done():
 					return
@@ -313,10 +321,7 @@ func (p *PintuPro) handleUserTrades(msg wsMessage, ch chan<- models.ExchangeMess
 	}
 
 	for _, t := range trades.Trades {
-		side := models.OrderSideBuy
-		if t.Side == "SELL" {
-			side = models.OrderSideSell
-		}
+		side := parseSide(t.Side)
 
 		amount := t.Size
 		if side == models.OrderSideSell {
@@ -349,7 +354,11 @@ func (p *PintuPro) handleUserOrders(msg wsMessage, ch chan<- models.ExchangeMess
 	for _, o := range orders.Orders {
 		order, err := toOrder(o)
 		if err != nil {
-			return fmt.Errorf("failed to convert order: %w", err)
+			// Skip the offending order rather than dropping the whole batch
+			// (which would also lose valid fills) and tripping the error-count
+			// forced-reconnect threshold on an unknown enum value.
+			log.Printf("skipping unparseable order update (client_order_id=%s): %v", o.ClientOrderID, err)
+			continue
 		}
 		ch <- models.ExchangeMessage{
 			Exchange:  Name,
@@ -364,72 +373,33 @@ func (p *PintuPro) handleUserOrders(msg wsMessage, ch chan<- models.ExchangeMess
 }
 
 func toOrder(o orderStatusMsg) (models.Order, error) {
-	side := models.OrderSideBuy
-	if o.Side == "SELL" {
-		side = models.OrderSideSell
+	otype, err := parseType(o.Type)
+	if err != nil {
+		return models.Order{}, err
 	}
 
-	var otype models.OrderType
-	switch o.Type {
-	case "LIMIT":
-		otype = models.OrderTypeLimit
-	case "MARKET":
-		otype = models.OrderTypeMarket
-	default:
-		return models.Order{}, fmt.Errorf("unknown order type: %s", o.Type)
+	status, err := parseStatus(o.Status)
+	if err != nil {
+		return models.Order{}, err
 	}
 
-	var status models.OrderStatus
-	switch o.Status {
-	case "PLACED":
-		status = models.OrderStatusPlaced
-	case "PARTIALLY_FILLED":
-		status = models.OrderStatusPartiallyFilled
-	case "FILLED":
-		status = models.OrderStatusFilled
-	case "CANCELED":
-		status = models.OrderStatusCanceled
-	case "REJECTED":
-		status = models.OrderStatusRejected
-	default:
-		return models.Order{}, fmt.Errorf("unknown order status: %s", o.Status)
+	timeInForce, err := parseTimeInForce(o.TimeInForce)
+	if err != nil {
+		return models.Order{}, err
 	}
 
-	var timeInForce models.TimeInForce
-	switch o.TimeInForce {
-	case "GTC":
-		timeInForce = models.TimeInForceGTC
-	case "IOC":
-		timeInForce = models.TimeInForceIOC
-	case "FOK":
-		timeInForce = models.TimeInForceFOK
-	default:
-		return models.Order{}, fmt.Errorf("unknown time in force: %s", o.TimeInForce)
-	}
-
-	parts := strings.Split(o.Symbol, "-")
-	if len(parts) != 2 {
-		return models.Order{}, fmt.Errorf("invalid symbol: %s", o.Symbol)
-	}
-
-	final := otype == models.OrderTypeMarket && timeInForce == models.TimeInForceIOC
-
-	if otype == models.OrderTypeLimit &&
-		(status == models.OrderStatusFilled ||
-			status == models.OrderStatusCanceled ||
-			status == models.OrderStatusRejected) {
-		final = true
-	}
+	base, quote := splitSymbol(o.Symbol)
 
 	return models.Order{
 		ExchangeOrderID: o.OrderID,
 		ClientOrderID:   o.ClientOrderID,
 		Symbol:          o.Symbol,
-		Base:            parts[0],
-		Quote:           parts[1],
-		Side:            side,
+		Base:            base,
+		Quote:           quote,
+		Side:            parseSide(o.Side),
 		Type:            otype,
 		Status:          status,
+		Reason:          o.Reason,
 		Price:           o.Price,
 		Size:            o.Size,
 		NotionalSize:    o.Notional,
@@ -437,7 +407,7 @@ func toOrder(o orderStatusMsg) (models.Order, error) {
 		AveragePrice:    o.CumPrice,
 		TimeInForce:     timeInForce,
 		PostOnly:        o.ExecInst == "POST_ONLY",
-		Final:           final,
+		Final:           isFinal(otype, timeInForce, status),
 
 		CreatedAt: tsToTime(o.CreatedAt),
 		UpdatedAt: tsToTime(o.UpdatedAt),
@@ -596,10 +566,7 @@ func (p *PintuPro) handlePublicTrades(msg wsMessage, ch chan<- models.ExchangeMe
 	}
 
 	for _, trade := range trades.Trades {
-		side := models.OrderSideBuy
-		if trade.Side == "SELL" {
-			side = models.OrderSideSell
-		}
+		side := parseSide(trade.Side)
 
 		price, err := decimal.NewFromString(trade.Price)
 		if err != nil {

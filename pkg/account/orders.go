@@ -28,7 +28,10 @@ func newOpenInterest() *openInterest {
 	}
 }
 
-func (oi *openInterest) setFromOrders(orders []models.Order) {
+// setFromOrders rebuilds the open interest from a full snapshot of open orders.
+// It returns an error (rather than panicking) if a snapshot order is
+// inconsistent, so a resync during a reconnect can degrade gracefully. [L2]
+func (oi *openInterest) setFromOrders(orders []models.Order) error {
 	oi.bids = make(map[string]models.Order)
 	oi.asks = make(map[string]models.Order)
 	oi.totalBidSize = decimal.Zero
@@ -38,9 +41,11 @@ func (oi *openInterest) setFromOrders(orders []models.Order) {
 
 	for _, o := range orders {
 		if err := oi.observe(o); err != nil {
-			panic(fmt.Sprintf("failed to set open interest from orders: %v\n %#v", err, orders))
+			return fmt.Errorf("failed to set open interest from orders: %w", err)
 		}
 	}
+
+	return nil
 }
 
 func (oi *openInterest) observe(o models.Order) error {
@@ -160,9 +165,17 @@ func (oi *openInterest) GetTotalAskSize() decimal.Decimal {
 }
 
 func (oi *openInterest) GetAvgBidPrice() decimal.Decimal {
+	if oi.totalBidSize.IsZero() {
+		return decimal.Zero
+	}
+
 	return oi.totalBidPrice.Div(oi.totalBidSize)
 }
 
 func (oi *openInterest) GetAvgAskPrice() decimal.Decimal {
+	if oi.totalAskSize.IsZero() {
+		return decimal.Zero
+	}
+
 	return oi.totalAskPrice.Div(oi.totalAskSize)
 }

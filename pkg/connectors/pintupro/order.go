@@ -3,6 +3,7 @@ package pintupro
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"degen/pkg/models"
@@ -66,7 +67,7 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 	resp := responseMessage{
 		Data: &data,
 	}
-	if err := api.call("private/place-order", &orderRequest, &resp); err != nil {
+	if err := api.call(ctx, "private/place-order", &orderRequest, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.PlaceOrder: %w", err)
 	}
 
@@ -96,11 +97,14 @@ func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Or
 	}
 
 	resp := responseMessage{}
-	if err := api.call("private/cancel-order", &orderRequest, &resp); err != nil {
+	if err := api.call(ctx, "private/cancel-order", &orderRequest, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.CancelOrder: %w", err)
 	}
 
-	if resp.Code == 7 {
+	// Map any "order is already gone" response to ErrOrderNotFound so callers
+	// can clean up local state, instead of only recognizing code 7 and leaving
+	// a phantom order to be re-cancelled every tick. [L8]
+	if resp.Code != 0 && isOrderGone(resp.Code, resp.Message, resp.Reason) {
 		return nil, models.ErrOrderNotFound
 	}
 
@@ -123,7 +127,7 @@ func (api *API) CancelAllOrders(ctx context.Context, symbol string) error {
 	}
 
 	resp := responseMessage{}
-	if err := api.call("private/cancel-all-orders", &req, &resp); err != nil {
+	if err := api.call(ctx, "private/cancel-all-orders", &req, &resp); err != nil {
 		return fmt.Errorf("pintupro.CancelAllOrders: %w", err)
 	}
 
@@ -202,13 +206,64 @@ type getOpenOrdersResponse struct {
 	Orders []orderResponse `json:"orders"`
 }
 
+// restOrderToModel converts a REST order payload into a models.Order using the
+// same validated, case-insensitive parsing and Final computation as the
+// WebSocket path (see convert.go), so the two paths cannot diverge. Fields not
+// present in the payload are taken from base (used by GetOrderDetails to
+// preserve e.g. PlacedAt).
+func restOrderToModel(o orderResponse, base models.Order) (models.Order, error) {
+	otype, err := parseType(o.Type)
+	if err != nil {
+		return models.Order{}, err
+	}
+
+	status, err := parseStatus(o.Status)
+	if err != nil {
+		return models.Order{}, err
+	}
+
+	tifStr := o.TimeInForce
+	if tifStr == "" {
+		// Resting orders should always carry a TIF; default a missing one to GTC
+		// rather than dropping the order.
+		tifStr = string(models.TimeInForceGTC)
+	}
+	tif, err := parseTimeInForce(tifStr)
+	if err != nil {
+		return models.Order{}, err
+	}
+
+	baseAsset, quoteAsset := splitSymbol(o.Symbol)
+
+	base.ExchangeOrderID = o.OrderID
+	base.ClientOrderID = o.ClientOrderID
+	base.Symbol = o.Symbol
+	base.Base = baseAsset
+	base.Quote = quoteAsset
+	base.Side = parseSide(o.Side)
+	base.Type = otype
+	base.Status = status
+	base.TimeInForce = tif
+	base.Price = o.Price
+	base.Size = o.Size
+	base.NotionalSize = o.CumValue
+	base.FilledSize = o.CumSize
+	base.AveragePrice = o.CumPrice
+	base.PostOnly = o.ExecInst == "POST_ONLY"
+	base.Final = isFinal(otype, tif, status)
+	base.CreatedAt = tsToTime(o.CreatedAt)
+	base.UpdatedAt = tsToTime(o.UpdatedAt)
+
+	return base, nil
+}
+
 func (api *API) GetOpenOrders(ctx context.Context, symbol string) ([]models.Order, error) {
 	req := getOpenOrdersRequest{
 		Symbol: symbol,
 	}
 
 	resp := getOpenOrdersResponse{}
-	if err := api.call("private/get-open-orders", &req, &resp); err != nil {
+	if err := api.call(ctx, "private/get-open-orders", &req, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.GetOpenOrders: %w", err)
 	}
 
@@ -218,22 +273,11 @@ func (api *API) GetOpenOrders(ctx context.Context, symbol string) ([]models.Orde
 
 	orders := make([]models.Order, 0, len(resp.Orders))
 	for _, o := range resp.Orders {
-		order := models.Order{
-			ExchangeOrderID: o.OrderID,
-			ClientOrderID:   o.ClientOrderID,
-			Symbol:          o.Symbol,
-			Side:            models.OrderSide(strings.ToLower(o.Side)),
-			Type:            models.OrderType(strings.ToLower(o.Type)),
-			Price:           o.Price,
-			Size:            o.Size,
-			NotionalSize:    o.CumValue,
-			FilledSize:      o.CumSize,
-			AveragePrice:    o.CumPrice,
-
-			TimeInForce: models.TimeInForce(o.TimeInForce),
-			Status:      models.OrderStatus(strings.ToLower(o.Status)),
-			UpdatedAt:   tsToTime(o.UpdatedAt),
-			CreatedAt:   tsToTime(o.CreatedAt),
+		order, err := restOrderToModel(o, models.Order{})
+		if err != nil {
+			// Skip the odd order rather than failing the whole snapshot.
+			log.Printf("pintupro.GetOpenOrders: skipping order %s: %v", o.OrderID, err)
+			continue
 		}
 		orders = append(orders, order)
 	}
@@ -256,7 +300,7 @@ type getOrderDetailsResponse struct {
 
 func (api *API) GetOrderDetails(ctx context.Context, order models.Order) (*models.Order, error) {
 	req := getOrderDetailsRequest{
-		Symbol:  order.Symbol,
+		Symbol: order.Symbol,
 	}
 
 	if order.ExchangeOrderID != "" {
@@ -266,27 +310,14 @@ func (api *API) GetOrderDetails(ctx context.Context, order models.Order) (*model
 	}
 
 	resp := getOrderDetailsResponse{}
-	if err := api.call("private/get-order-details", &req, &resp); err != nil {
+	if err := api.call(ctx, "private/get-order-details", &req, &resp); err != nil {
 		return nil, fmt.Errorf("pintupro.GetOrderDetails: %w", err)
 	}
 
-	o := resp.Order
-	order.ExchangeOrderID = o.OrderID
-	order.ClientOrderID = o.ClientOrderID
-	order.Symbol = o.Symbol
-	order.Side = models.OrderSide(strings.ToLower(o.Side))
-	order.Type = models.OrderType(strings.ToLower(o.Type))
-	order.Price = o.Price
-	order.Size = o.Size
-	order.NotionalSize = o.CumValue
-	order.FilledSize = o.CumSize
-	order.AveragePrice = o.CumPrice
+	out, err := restOrderToModel(resp.Order, order)
+	if err != nil {
+		return nil, fmt.Errorf("pintupro.GetOrderDetails: %w", err)
+	}
 
-	order.TimeInForce = models.TimeInForce(o.TimeInForce)
-	order.Status = models.OrderStatus(strings.ToLower(o.Status))
-	order.UpdatedAt = tsToTime(o.UpdatedAt)
-	order.CreatedAt = tsToTime(o.CreatedAt)
-
-	return &order, nil
+	return &out, nil
 }
-

@@ -403,7 +403,9 @@ func TestOpenInterest_SetFromOrders(t *testing.T) {
 			}
 
 			oi := newOpenInterest()
-			oi.setFromOrders(tt.args.orders)
+			if err := oi.setFromOrders(tt.args.orders); err != nil {
+				t.Fatalf("setFromOrders returned unexpected error: %v", err)
+			}
 
 			// Assertions
 			if tt.wantState.totalBidSize != "" {
@@ -448,7 +450,9 @@ func TestOpenInterest_Getters(t *testing.T) {
 		newTestOrder("a1", models.OrderSideSell, "11", "4", "0", models.OrderStatusPlaced, false),            // Open: 4, Price*Open: 44
 		newTestOrder("a2", models.OrderSideSell, "10.9", "5", "2", models.OrderStatusPartiallyFilled, false), // Open: 3, Price*Open: 32.7
 	}
-	oi.setFromOrders(ordersToSetup) // This populates oi based on the logic in setFromOrders/observe
+	if err := oi.setFromOrders(ordersToSetup); err != nil { // This populates oi based on the logic in setFromOrders/observe
+		t.Fatalf("setFromOrders returned unexpected error: %v", err)
+	}
 
 	t.Run("GetTotalBidSize", func(t *testing.T) {
 		// b1 open size = 2. b2 open size = 3-1=2. Total = 2+2=4
@@ -478,12 +482,10 @@ func TestOpenInterest_Getters(t *testing.T) {
 
 	t.Run("GetAvgBidPrice_ZeroSize", func(t *testing.T) {
 		localOi := newOpenInterest() // Use a local, new openInterest instance
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("GetAvgBidPrice did not panic with zero total bid size")
-			}
-		}()
-		_ = localOi.GetAvgBidPrice() // Should panic
+		// With no open bids the average must be zero, not a divide-by-zero panic. [L1]
+		if got := localOi.GetAvgBidPrice(); !got.IsZero() {
+			t.Errorf("GetAvgBidPrice() with zero size = %s, want 0", got)
+		}
 	})
 
 	t.Run("GetAvgAskPrice", func(t *testing.T) {
@@ -498,12 +500,10 @@ func TestOpenInterest_Getters(t *testing.T) {
 
 	t.Run("GetAvgAskPrice_ZeroSize", func(t *testing.T) {
 		localOi := newOpenInterest() // Use a local, new openInterest instance
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("GetAvgAskPrice did not panic with zero total ask size")
-			}
-		}()
-		_ = localOi.GetAvgAskPrice() // Should panic
+		// With no open asks the average must be zero, not a divide-by-zero panic. [L1]
+		if got := localOi.GetAvgAskPrice(); !got.IsZero() {
+			t.Errorf("GetAvgAskPrice() with zero size = %s, want 0", got)
+		}
 	})
 
 	// Test GetBids
