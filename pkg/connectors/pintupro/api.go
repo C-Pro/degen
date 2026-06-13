@@ -320,6 +320,77 @@ func (api *API) GetBBO(
 	return &bbo, nil
 }
 
+// Ticker24h is a symbol's daily (1d) OHLC snapshot from public/get-tickers.
+type Ticker24h struct {
+	Symbol string
+	Open   decimal.Decimal
+	High   decimal.Decimal
+	Low    decimal.Decimal
+	Close  decimal.Decimal
+	Volume decimal.Decimal
+}
+
+// tickerEntry is a single instrument's entry in the get-tickers response.
+type tickerEntry struct {
+	Open   decimal.Decimal `json:"o"`
+	High   decimal.Decimal `json:"h"`
+	Low    decimal.Decimal `json:"l"`
+	Close  decimal.Decimal `json:"c"`
+	Volume decimal.Decimal `json:"v"`
+}
+
+// tickersData is the `data` payload of public/get-tickers: an interval label and
+// a map of instrument name -> OHLC entry.
+type tickersData struct {
+	Interval string                 `json:"interval"`
+	Tickers  map[string]tickerEntry `json:"tickers"`
+}
+
+// UnmarshalJSON is required so tickersData decodes through responseMessage's
+// `data` field: that (easyjson) decoder only fills a Data pointer that
+// implements easyjson/json Unmarshaler, otherwise it falls back to a generic
+// map and leaves this struct empty. The alias breaks the recursion.
+func (t *tickersData) UnmarshalJSON(b []byte) error {
+	type alias tickersData
+	return json.Unmarshal(b, (*alias)(t))
+}
+
+// Get24hTicker returns the 24h (1d) OHLC for a single symbol. The endpoint
+// returns every instrument keyed by name (the instrument_name parameter is
+// ignored by the API), so the requested symbol is selected client-side.
+func (api *API) Get24hTicker(ctx context.Context, symbol string) (*Ticker24h, error) {
+	params := url.Values{}
+	params.Set("interval", "1d")
+	params.Set("instrument_name", symbol)
+
+	var data tickersData
+	resp := responseMessage{Data: &data}
+	if err := api.call(ctx, "public/get-tickers", params, &resp); err != nil {
+		return nil, fmt.Errorf("pintupro.Get24hTicker: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return nil,
+			fmt.Errorf("pintupro.Get24hTicker: unexpected code %d %s %s",
+				resp.Code, resp.Message, resp.Reason,
+			)
+	}
+
+	e, ok := data.Tickers[symbol]
+	if !ok {
+		return nil, fmt.Errorf("pintupro.Get24hTicker: symbol %q not found", symbol)
+	}
+
+	return &Ticker24h{
+		Symbol: symbol,
+		Open:   e.Open,
+		High:   e.High,
+		Low:    e.Low,
+		Close:  e.Close,
+		Volume: e.Volume,
+	}, nil
+}
+
 // easyjson:json
 type symbolsReferenceResponse struct {
 	Symbols []struct {
