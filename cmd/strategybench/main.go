@@ -62,7 +62,7 @@ func main() {
 	// Ladder parameters.
 	levels := flag.Int("levels", 3, "ladder: price levels per side")
 	alloc := flag.Float64("alloc", 0.5, "ladder: portfolio allocation [0,1]")
-	levelSpread := flag.Float64("level-spread", 0.006, "ladder: relative spread between levels")
+	levelSpread := flag.Float64("level-spread", 0.010, "ladder: relative spread between levels")
 	tolerance := flag.Float64("tolerance", 0.005, "ladder: re-quote price tolerance")
 
 	// Monkey parameters.
