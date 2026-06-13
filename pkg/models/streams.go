@@ -14,6 +14,7 @@ const (
 	MsgTypeBalanceUpdate
 	MsgTypePositionUpdate
 	MsgTypePublicTrade
+	MsgTypeMarketTicker
 )
 
 type ExchangeMessage struct {
@@ -45,6 +46,15 @@ func (b BBO) Spread() (decimal.Decimal, bool) {
 	}
 
 	return b.Ask.Price.Sub(b.Bid.Price).Div(b.Ask.Price), true
+}
+
+type OrderBook struct {
+	Symbol string
+	// Public order book data is already outdated when we receive it. It does not
+	// make sense to pay decimal.Decimal overhead for the precision.
+	Bids      [][2]float64
+	Asks      [][2]float64
+	Timestamp time.Time
 }
 
 type BalanceUpdate struct {

@@ -2,6 +2,7 @@ package account
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"degen/pkg/models"
@@ -9,28 +10,33 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// entry represents a single price entry in the position structure.
-// float64 recision should be enough for single entry and we can
-// have a lot of entries in large and old positions, so avoiding
-// decimal.Decimal makes sense.
-type entry struct {
-	prev float64
-	next float64
-	size float64
+// level represents the size of the position opened at a specific price.
+// float64 precision should be enough for a single level and we can have
+// a lot of levels in large and old positions, so avoiding decimal.Decimal
+// here makes sense. Aggregate values (totalSize, avgPrice, realizedPnL) are
+// kept in decimal.Decimal to avoid precision drift.
+type level struct {
+	price float64
+	size  float64
 }
 
-func (e entry) Size() decimal.Decimal {
-	return decimal.NewFromFloat(e.size)
-}
-
-// positionStructure stores position in a double linked list of
-// entries. Each entry corresponds to specific price.
-// This allows to understand exact price structure of the position,
-// instead of treating it is as a big blob with average price.
+// positionStructure stores the position as price levels kept sorted by price
+// (ascending). This allows understanding the exact price structure of the
+// position instead of treating it as a single blob with an average price.
+//
+// The "head" of the structure (the level reduced first) depends on direction:
+// for a long position it is the lowest price, for a short position the highest
+// price. Direction is encoded by less() and the traversal helpers below.
+//
+// Earlier versions used a hand-rolled doubly linked list keyed by float64
+// price with 0 as the "no node" sentinel. That had three defects: middle
+// inserts did not maintain back-pointers (orphaning the head and silently
+// losing size), closing-and-flipping left dangling pointers and stale
+// zero-size nodes, and a legitimate price of 0 collided with the sentinel.
+// The sorted slice below avoids all three.
 type positionStructure struct {
 	long        bool
-	sizes       map[float64]entry
-	head        float64
+	levels      []level
 	totalSize   decimal.Decimal
 	avgPrice    decimal.Decimal
 	updatedAt   time.Time
@@ -46,12 +52,23 @@ func (p *positionStructure) Position() models.Position {
 	}
 }
 
+// less reports whether price a should be reduced before price b.
 func (p *positionStructure) less(a float64, b float64) bool {
 	if p.long {
 		return a < b
 	}
 
 	return a > b
+}
+
+// headIndex returns the index into the sorted levels slice of the level that
+// should be reduced first (lowest price for long, highest for short).
+func (p *positionStructure) headIndex() int {
+	if p.long {
+		return 0
+	}
+
+	return len(p.levels) - 1
 }
 
 func (p *positionStructure) Update(upd models.PositionUpdate) {
@@ -62,59 +79,21 @@ func (p *positionStructure) Update(upd models.PositionUpdate) {
 	size := upd.Amount.InexactFloat64()
 	price := upd.Price.InexactFloat64()
 
-	if p.sizes == nil {
-		p.sizes = make(map[float64]entry)
+	switch {
+	case len(p.levels) == 0:
+		// First level (re)opens the position; derive the side from its sign.
 		p.long = size > 0
-	} else {
-		// If position side is opposite to the incoming trade, position should be reduced.
-		if p.long != (size > 0) {
-			p.reduce(upd)
-			return
-		}
+	case p.long != (size > 0):
+		// Incoming trade is opposite to the position side: reduce (and possibly flip).
+		p.reduce(upd)
+		return
 	}
 
-	// If entry with the same price exists, update it.
-	if e, ok := p.sizes[price]; ok {
-		e.size += size
-		p.sizes[price] = e
+	// Same side as the position: merge into an existing level or insert a new one.
+	if i, ok := p.find(price); ok {
+		p.levels[i].size += size
 	} else {
-		// Find where to insert a new entry.
-		switch {
-		// Case 0: first entry.
-		case p.head == 0:
-			p.head = price
-			p.sizes[price] = entry{
-				size: size,
-			}
-		// Case 1: price is better than head, insert at the top.
-		case p.less(price, p.head):
-			p.sizes[price] = entry{
-				next: p.head,
-				size: size,
-			}
-			p.head = price
-		// Default case: find first entry that is better than the incoming price.
-		default:
-			prev := float64(0)
-			curr := p.head
-			for !p.less(price, curr) {
-				prev = curr
-				curr = p.sizes[curr].next
-				if curr == 0 {
-					break
-				}
-			}
-			// Insert new entry between prev and curr.
-			p.sizes[price] = entry{
-				prev: prev,
-				next: curr,
-				size: size,
-			}
-			// Update prev entry's next.
-			prevEntry := p.sizes[prev]
-			prevEntry.next = price
-			p.sizes[prev] = prevEntry
-		}
+		p.insert(level{price: price, size: size})
 	}
 
 	p.updatedAt = upd.Timestamp
@@ -124,103 +103,114 @@ func (p *positionStructure) Update(upd models.PositionUpdate) {
 	p.avgPrice = (p.avgPrice.Mul(p.totalSize.Sub(upd.Amount)).Add(upd.Price.Mul(upd.Amount))).Div(p.totalSize)
 }
 
-// reduce removes size from the position.
-// It removes up to size liquidity from entries, starting from the head.
-// If size is more than the total size it will create a position of
-// the opposite side with the remaining size.
-func (p *positionStructure) reduce(upd models.PositionUpdate) {
-	if p.sizes == nil {
-		panic("reducing empty position")
+// find returns the index of the level at the given price, if present.
+func (p *positionStructure) find(price float64) (int, bool) {
+	i := sort.Search(len(p.levels), func(i int) bool { return p.levels[i].price >= price })
+	if i < len(p.levels) && p.levels[i].price == price {
+		return i, true
 	}
 
+	return 0, false
+}
+
+// insert adds a new level keeping the slice sorted by price ascending.
+func (p *positionStructure) insert(l level) {
+	i := sort.Search(len(p.levels), func(i int) bool { return p.levels[i].price >= l.price })
+	p.levels = append(p.levels, level{})
+	copy(p.levels[i+1:], p.levels[i:])
+	p.levels[i] = l
+}
+
+// removeHead removes the level at the given head index.
+func (p *positionStructure) removeHead(idx int) {
+	p.levels = append(p.levels[:idx], p.levels[idx+1:]...)
+}
+
+// reduce removes size from the position, starting from the head (the level we
+// would close first). If the incoming size exceeds the whole position it closes
+// it and opens a new position of the opposite side with the remaining size.
+func (p *positionStructure) reduce(upd models.PositionUpdate) {
+	// size here has the opposite sign to the size of the position.
 	size := upd.Amount.InexactFloat64()
 
-	// Size here will have the opposite sign to the size of the position.
-	var next float64
-	for curr := p.head; curr != 0 && size != 0; curr = next {
-		e := p.sizes[curr]
-		next = e.next
-		// If the entry is smaller than the size, remove it.
+	for len(p.levels) > 0 && size != 0 {
+		idx := p.headIndex()
+		e := p.levels[idx]
+		curr := e.price
+		eSize := decimal.NewFromFloat(e.size)
+
 		if math.Abs(e.size) <= math.Abs(size) {
-			p.realizedPnL = p.realizedPnL.Add(upd.Price.Mul(e.Size())).Sub(decimal.NewFromFloat(curr).Mul(e.Size()))
+			// The level is fully consumed.
+			p.realizedPnL = p.realizedPnL.Add(upd.Price.Mul(eSize)).Sub(decimal.NewFromFloat(curr).Mul(eSize))
 			size += e.size // decreasing absolute value of size.
-			delete(p.sizes, curr)
+
 			switch {
-			case p.totalSize.Sub(e.Size()).IsZero():
+			case p.totalSize.Sub(eSize).IsZero():
 				p.avgPrice = decimal.Zero
 			default:
 				// p.avgPrice = (p.avgPrice*p.totalSize - curr*e.size) / (p.totalSize - e.size)
 				p.avgPrice = p.avgPrice.Mul(p.totalSize).
-					Sub(decimal.NewFromFloat(curr).Mul(e.Size())).
-					Div(p.totalSize.Sub(e.Size()))
+					Sub(decimal.NewFromFloat(curr).Mul(eSize)).
+					Div(p.totalSize.Sub(eSize))
 			}
-			p.totalSize = p.totalSize.Sub(e.Size())
-			if e.prev == 0 {
-				p.head = e.next
-			} else {
-				prevEntry := p.sizes[e.prev]
-				prevEntry.next = e.next
-				p.sizes[e.prev] = prevEntry
-			}
-		} else { // If the entry is larger than the size, reduce it.
+			p.totalSize = p.totalSize.Sub(eSize)
+			p.removeHead(idx)
+		} else {
+			// The level is larger than the remaining size: reduce it in place.
+			sz := decimal.NewFromFloat(size)
 			p.realizedPnL = p.realizedPnL.Add(
-				decimal.NewFromFloat(curr).Mul(decimal.NewFromFloat(size)).
-					Sub(upd.Price.Mul(decimal.NewFromFloat(size))))
+				decimal.NewFromFloat(curr).Mul(sz).
+					Sub(upd.Price.Mul(sz)))
 			// p.avgPrice = (p.avgPrice*p.totalSize + curr*size) / (p.totalSize + size)
 			p.avgPrice = p.avgPrice.Mul(p.totalSize).
-				Add(decimal.NewFromFloat(curr).Mul(decimal.NewFromFloat(size))).
-				Div(p.totalSize.Add(decimal.NewFromFloat(size)))
-			// p.totalSize += size
-			p.totalSize = p.totalSize.Add(decimal.NewFromFloat(size))
+				Add(decimal.NewFromFloat(curr).Mul(sz)).
+				Div(p.totalSize.Add(sz))
+			p.totalSize = p.totalSize.Add(sz)
 			e.size += size
-			p.sizes[curr] = e
+			p.levels[idx] = e
 			size = 0
 			break
 		}
 	}
 
-	// If there is still size left, open a new position in
-	// the opposite direction.
+	p.updatedAt = upd.Timestamp
+
+	// If there is still size left, the position was fully closed: open a new
+	// position in the opposite direction with a clean structure. Update() will
+	// re-derive the side from the leftover sign because levels is now empty.
 	if size != 0 {
-		p.long = !p.long
+		p.levels = nil
 		upd.Amount = decimal.NewFromFloat(size)
 		p.Update(upd)
 	}
 }
 
-// getReduceSize returns the size that position can be reduced by
-// given the expected execution price.
+// getReduceSize returns the size that the position can be reduced by given the
+// expected execution price (sum of levels strictly "better" than price).
 func (p *positionStructure) getReduceSize(price float64) float64 {
-	if p.sizes == nil {
-		return 0
-	}
-
 	size := 0.0
-	for curr := p.head; curr != 0; curr = p.sizes[curr].next {
-		if p.less(curr, price) {
-			size += p.sizes[curr].size
-			continue
+	for _, l := range p.levels {
+		if p.less(l.price, price) {
+			size += l.size
 		}
-		break
 	}
 
 	return size
 }
 
-// getMinReducePrice returns the minimum price at which the position
-// can be reduced by up to the given size.
+// getMinReducePrice returns the size-weighted average price at which the
+// position can be reduced by up to the given size, walking from the head.
 func (p *positionStructure) getMinReducePrice(reqSize float64) (price, size float64) {
-	if p.sizes == nil {
-		return 0, 0
-	}
-
 	sizePrice := 0.0
-	for curr := p.head; curr != 0 && reqSize != 0; curr = p.sizes[curr].next {
-		reduceSize := math.Min(math.Abs(reqSize), math.Abs(p.sizes[curr].size))
-		if p.long {
-			reduceSize = -reduceSize
+	n := len(p.levels)
+	for k := 0; k < n && reqSize != 0; k++ {
+		idx := k
+		if !p.long {
+			idx = n - 1 - k
 		}
-		sizePrice += math.Abs(curr * reduceSize)
+		l := p.levels[idx]
+		reduceSize := math.Min(math.Abs(reqSize), math.Abs(l.size))
+		sizePrice += math.Abs(l.price * reduceSize)
 		reqSize -= math.Abs(reduceSize)
 		size += math.Abs(reduceSize)
 	}
@@ -230,4 +220,34 @@ func (p *positionStructure) getMinReducePrice(reqSize float64) (price, size floa
 	}
 
 	return sizePrice / size, size
+}
+
+// minReducePrice returns the lowest entry price of the position (ignoring any
+// zero-size levels). The strategy uses it as a reduce-only bound: a floor for
+// asks when long and a ceiling for bids when short. For a short, the lowest
+// entry is the conservative ceiling (buying back below the cheapest sale
+// guarantees a profit on every lot). Returns zero for an empty position.
+//
+// This deliberately matches the historical behaviour (min over all entries),
+// but operates on the corrected level structure so it can no longer be skewed
+// by the stale zero-size entries the previous linked-list implementation left
+// behind.
+func (p *positionStructure) minReducePrice() decimal.Decimal {
+	found := false
+	min := 0.0
+	for _, l := range p.levels {
+		if l.size == 0 {
+			continue
+		}
+		if !found || l.price < min {
+			min = l.price
+			found = true
+		}
+	}
+
+	if !found {
+		return decimal.Zero
+	}
+
+	return decimal.NewFromFloat(min)
 }

@@ -26,7 +26,7 @@ type BinanceReq struct {
 }
 
 func (bts *Binance) refreshListenKey(ctx context.Context) error {
-	lk, err := bts.API.GetListenKey(ctx)
+	lk, err := bts.GetListenKey(ctx)
 	if err != nil {
 		return fmt.Errorf("binance.refreshListenKey: %v", err)
 	}

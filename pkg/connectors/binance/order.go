@@ -109,7 +109,7 @@ func (api *API) PlaceOrder(ctx context.Context, order models.Order) (*models.Ord
 		return nil, fmt.Errorf("binance.PlaceOrder failed perform request: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var respData placeOrderResp
 
 	b, err := io.ReadAll(resp.Body)
@@ -168,7 +168,7 @@ func (api *API) CancelOrder(ctx context.Context, order models.Order) (*models.Or
 		return nil, fmt.Errorf("binance.CancelOrder failed perform request: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var respData placeOrderResp
 
 	b, err := io.ReadAll(resp.Body)

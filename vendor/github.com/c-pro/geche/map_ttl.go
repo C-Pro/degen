@@ -23,16 +23,20 @@ func zero[T any]() T {
 	return z
 }
 
+type onEvictFunc[K comparable, V any] func(key K, value V)
+
 // MapTTLCache is the thread-safe map-based cache with TTL cache invalidation support.
 // MapTTLCache uses double linked list to maintain FIFO order of inserted values.
 type MapTTLCache[K comparable, V any] struct {
-	data map[K]ttlRec[K, V]
-	mux  sync.RWMutex
-	ttl  time.Duration
-	now  func() time.Time
-	tail K
-	head K
-	zero K
+	data    map[K]ttlRec[K, V]
+	mux     sync.RWMutex
+	ttl     time.Duration
+	// TODO: replace with sync.Test
+	now     func() time.Time
+	onEvict onEvictFunc[K, V]
+	tail    K
+	head    K
+	zero    K
 }
 
 // NewMapTTLCache creates MapTTLCache instance and spawns background
@@ -70,41 +74,46 @@ func NewMapTTLCache[K comparable, V any](
 	return &c
 }
 
+// OnEvict sets a callback function that will be called when an entry is evicted from the cache
+// due to TTL expiration. The callback receives the key and value of the evicted entry.
+// Note that the eviction callback is not called for Del operation.
+func (c *MapTTLCache[K, V]) OnEvict(f onEvictFunc[K, V]) {
+	c.mux.Lock()
+	c.onEvict = f
+	c.mux.Unlock()
+}
+
 func (c *MapTTLCache[K, V]) Set(key K, value V) {
 	c.mux.Lock()
 	defer c.mux.Unlock()
+	c.set(key, value)
+}
 
-	val := ttlRec[K, V]{
-		value:     value,
-		prev:      c.tail,
-		timestamp: c.now(),
+// SetIfPresent sets the given key to the given value if the key was already present, and resets the TTL
+func (c *MapTTLCache[K, V]) SetIfPresent(key K, value V) (V, bool) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	old, err := c.get(key)
+	if err == nil {
+		c.set(key, value)
+		return old, true
 	}
 
-	if c.head == c.zero {
-		c.head = key
-		c.tail = key
-		val.prev = c.zero
-		c.data[key] = val
-		return
+	return old, false
+}
+
+func (c *MapTTLCache[K, V]) SetIfAbsent(key K, value V) (V, bool) {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	old, err := c.get(key)
+	if err == nil {
+		return old, false
 	}
 
-	// If the record for this key already exists
-	// and is somewhere in the middle of the list
-	// removing it before adding to the tail.
-	if rec, ok := c.data[key]; ok && key != c.tail {
-		prev := c.data[rec.prev]
-		next := c.data[rec.next]
-		prev.next = rec.next
-		next.prev = rec.prev
-		c.data[rec.prev] = prev
-		c.data[rec.next] = next
-	}
-
-	tailval := c.data[c.tail]
-	tailval.next = key
-	c.data[c.tail] = tailval
-	c.tail = key
-	c.data[key] = val
+	c.set(key, value)
+	return old, true
 }
 
 // Get returns ErrNotFound if key is not found in the cache or record is outdated.
@@ -112,16 +121,7 @@ func (c *MapTTLCache[K, V]) Get(key K) (V, error) {
 	c.mux.RLock()
 	defer c.mux.RUnlock()
 
-	v, ok := c.data[key]
-	if !ok {
-		return v.value, ErrNotFound
-	}
-
-	if c.now().Sub(v.timestamp) >= c.ttl {
-		return v.value, ErrNotFound
-	}
-
-	return v.value, nil
+	return c.get(key)
 }
 
 func (c *MapTTLCache[K, V]) Del(key K) error {
@@ -158,10 +158,22 @@ func (c *MapTTLCache[K, V]) Del(key K) error {
 	return nil
 }
 
-// cleanup removes outdated records.
+// cleanup removes outdated records
+// and calls eviction callbacks.
 func (c *MapTTLCache[K, V]) cleanup() error {
+	var (
+		evicted map[K]V
+		onEvict onEvictFunc[K, V]
+	)
+
 	c.mux.Lock()
-	defer c.mux.Unlock()
+
+	// Preallocate a small map for evicted records
+	// if eviction callback is set.
+	if c.onEvict != nil {
+		onEvict = c.onEvict
+		evicted = make(map[K]V, 16)
+	}
 
 	key := c.head
 	for {
@@ -177,9 +189,13 @@ func (c *MapTTLCache[K, V]) cleanup() error {
 		c.head = rec.next
 		delete(c.data, key)
 
+		if onEvict != nil {
+			evicted[key] = rec.value
+		}
+
 		if key == c.tail {
 			c.tail = c.zero
-			return nil
+			break
 		}
 
 		next, ok := c.data[rec.next]
@@ -188,6 +204,12 @@ func (c *MapTTLCache[K, V]) cleanup() error {
 			c.data[rec.next] = next
 		}
 		key = rec.next
+	}
+	c.mux.Unlock()
+
+	// Call eviction callbacks outside of the lock.
+	for k, v := range evicted {
+		onEvict(k, v)
 	}
 
 	return nil
@@ -207,11 +229,84 @@ func (c *MapTTLCache[K, V]) Snapshot() map[K]V {
 	return snapshot
 }
 
-
 // Len returns the number of records in the cache.
 func (c *MapTTLCache[K, V]) Len() int {
 	c.mux.RLock()
 	defer c.mux.RUnlock()
 
 	return len(c.data)
+}
+
+// Clear removes all records from the cache.
+func (c *MapTTLCache[K, V]) Clear() {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	clear(c.data)
+	c.head = c.zero
+	c.tail = c.zero
+}
+
+func (c *MapTTLCache[K, V]) set(key K, value V) {
+	ts := c.now()
+	val := ttlRec[K, V]{
+		value:     value,
+		prev:      c.tail,
+		timestamp: ts,
+	}
+
+	if c.head == c.zero {
+		c.head = key
+		c.tail = key
+		c.data[key] = val
+		return
+	}
+
+	// If it's already the tail, we only need to update the value and timestamp
+	if c.tail == key {
+		rec := c.data[c.tail]
+		rec.timestamp = ts
+		rec.value = value
+		c.data[c.tail] = rec
+		return
+	}
+
+	// If the record for this key already exists
+	// and is not already the tail of the list,
+	// removing it before adding to the tail.
+	if rec, ok := c.data[key]; ok {
+		next := c.data[rec.next]
+
+		// edge case: the current head becomes the new tail
+		if key == c.head {
+			c.head = rec.next
+			next.prev = c.zero
+		} else {
+			prev := c.data[rec.prev]
+			prev.next = rec.next
+			c.data[rec.prev] = prev
+			next.prev = rec.prev
+		}
+
+		c.data[rec.next] = next
+	}
+
+	tailval := c.data[c.tail]
+	tailval.next = key
+	c.data[c.tail] = tailval
+	c.tail = key
+	c.data[key] = val
+}
+
+func (c *MapTTLCache[K, V]) get(key K) (V, error) {
+	v, ok := c.data[key]
+	if !ok {
+		return v.value, ErrNotFound
+	}
+
+	if c.now().Sub(v.timestamp) >= c.ttl {
+		return v.value, ErrNotFound
+	}
+
+	return v.value, nil
 }

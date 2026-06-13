@@ -1,810 +1,450 @@
 package strategies
 
 import (
-	"math"
-	"math/rand"
+	"context"
+	"fmt"
 	"testing"
+	"time"
 
+	"degen/pkg/account"
+	"degen/pkg/connectors/dummy"
 	"degen/pkg/models"
 
 	"github.com/shopspring/decimal"
 )
 
-func TestPositionAddAvgPrice(t *testing.T) {
-	cases := []struct {
-		name         string
-		trades       [][2]float64
-		expAvgPrice  float64
-		expTotalSize float64
-		expLong      bool
-	}{
-		{
-			name: "add one trade long",
-			trades: [][2]float64{
-				{100, 1},
-			},
-			expAvgPrice:  100,
-			expTotalSize: 1,
-			expLong:      true,
+func TestLadder_IdealAllocation(t *testing.T) {
+	cfg := LadderConfig{
+		PortfolioAllocation: decimal.NewFromFloat(0.5), // 50%
+		LevelsCount:         3,
+		LevelsSpread: []decimal.Decimal{
+			decimal.NewFromFloat(0.01), // 1%
+			decimal.NewFromFloat(0.02), // 2%
+			decimal.NewFromFloat(0.03), // 3%
 		},
-		{
-			name: "one trade short",
-			trades: [][2]float64{
-				{100, -1},
-			},
-			expAvgPrice:  100,
-			expTotalSize: -1,
-			expLong:      false,
+		LevelsSize: []decimal.Decimal{
+			decimal.NewFromFloat(0.2), // 20%
+			decimal.NewFromFloat(0.3), // 30%
+			decimal.NewFromFloat(0.5), // 50%
 		},
-		{
-			name: "two trades long",
-			trades: [][2]float64{
-				{100, 1},
-				{101, 1},
-			},
-			expAvgPrice:  100.5,
-			expTotalSize: 2,
-			expLong:      true,
-		},
-		{
-			name: "close long position 1",
-			trades: [][2]float64{
-				{100, 1},
-				{101, -1},
-			},
-			expAvgPrice:  0,
-			expTotalSize: 0,
-			expLong:      true,
-		},
-		{
-			name: "close long position 2",
-			trades: [][2]float64{
-				{100, 1},
-				{101, 1},
-				{102, -2},
-			},
-			expAvgPrice:  0,
-			expTotalSize: 0,
-			expLong:      true,
-		},
-		{
-			name: "add multiple trades long",
-			trades: [][2]float64{
-				{100, 1},
-				{101, 1},
-				{102, 1},
-			},
-			expAvgPrice:  101,
-			expTotalSize: 3,
-			expLong:      true,
-		},
-		{
-			name: "add multiple trades short",
-			trades: [][2]float64{
-				{100, -1},
-				{101, -1},
-				{102, -1},
-			},
-			expAvgPrice:  101,
-			expTotalSize: -3,
-			expLong:      false,
-		},
-		{
-			name: "reduce long position partially",
-			trades: [][2]float64{
-				{100, 2},
-				{101, -1},
-			},
-			expAvgPrice:  100,
-			expTotalSize: 1,
-			expLong:      true,
-		},
-		{
-			name: "reduce short position partially",
-			trades: [][2]float64{
-				{100, -2},
-				{101, 1},
-			},
-			expAvgPrice:  100,
-			expTotalSize: -1,
-			expLong:      false,
-		},
-		{
-			name: "flip position from long to short",
-			trades: [][2]float64{
-				{100, 1},
-				{101, -2},
-			},
-			expAvgPrice:  101,
-			expTotalSize: -1,
-			expLong:      false,
-		},
-		{
-			name: "flip position from short to long",
-			trades: [][2]float64{
-				{100, -1},
-				{101, 2},
-			},
-			expAvgPrice:  101,
-			expTotalSize: 1,
-			expLong:      true,
+		LevelsPriceTolerance: []decimal.Decimal{
+			decimal.NewFromFloat(0.005),
+			decimal.NewFromFloat(0.005),
+			decimal.NewFromFloat(0.005),
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := positionStructure{}
-			for _, trade := range tc.trades {
-				p.add(trade[0], trade[1])
-			}
-
-			if p.avgPrice != tc.expAvgPrice {
-				t.Errorf("expected avgPrice %v, got %v", tc.expAvgPrice, p.avgPrice)
-			}
-
-			if p.totalSize != tc.expTotalSize {
-				t.Errorf("expected totalSize %v, got %v", tc.expTotalSize, p.totalSize)
-			}
-
-			if p.long != tc.expLong {
-				t.Errorf("expected long %v, got %v", tc.expLong, p.long)
-			}
-		})
-	}
-}
-
-func TestGetMinReducePrice(t *testing.T) {
-	cases := []struct {
-		name           string
-		trades         [][2]float64
-		reduceSize     float64
-		expReducePrice float64
-		expReduceSize  float64
-	}{
-		{
-			name:           "empty position",
-			trades:         [][2]float64{},
-			reduceSize:     1,
-			expReducePrice: 0,
-			expReduceSize:  0,
-		},
-		{
-			name: "reduce long position 1 (partial)",
-			trades: [][2]float64{
-				{100, 1},
-			},
-			reduceSize:     0.5,
-			expReducePrice: 100,
-			expReduceSize:  0.5,
-		},
-		{
-			name: "reduce long position 1 (full)",
-			trades: [][2]float64{
-				{100, 1},
-			},
-			reduceSize:     1,
-			expReducePrice: 100,
-			expReduceSize:  1,
-		},
-		{
-			name: "reduce long position 2 (partial)",
-			trades: [][2]float64{
-				{100, 1},
-				{101, 1},
-			},
-			reduceSize:     1.5,
-			expReducePrice: 100.33333333333333,
-			expReduceSize:  1.5,
-		},
-		{
-			name: "reduce long position 2 (full, not enough)",
-			trades: [][2]float64{
-				{100, 1},
-				{101, 1},
-			},
-			reduceSize:     3,
-			expReducePrice: 100.5,
-			expReduceSize:  2,
-		},
-		{
-			name: "reduce short position 1 (partial)",
-			trades: [][2]float64{
-				{100, -1},
-			},
-			reduceSize:     0.5,
-			expReducePrice: 100,
-			expReduceSize:  0.5,
-		},
-		{
-			name: "reduce short position 1 (full)",
-			trades: [][2]float64{
-				{100, -1},
-			},
-			reduceSize:     1,
-			expReducePrice: 100,
-			expReduceSize:  1,
-		},
-		{
-			name: "reduce short position 2 (partial)",
-			trades: [][2]float64{
-				{100, -1},
-				{101, -1},
-			},
-			reduceSize:     1.5,
-			expReducePrice: 100.66666666666667,
-			expReduceSize:  1.5,
-		},
-		{
-			name: "reduce short position 2 (full, not enough)",
-			trades: [][2]float64{
-				{100, -1},
-				{101, -1},
-			},
-			reduceSize:     3,
-			expReducePrice: 100.5,
-			expReduceSize:  2,
-		},
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config validation failed: %v", err)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := positionStructure{}
-			for _, trade := range tc.trades {
-				p.add(trade[0], trade[1])
-			}
-
-			price, size := p.getMinReducePrice(tc.reduceSize)
-			if price != tc.expReducePrice {
-				t.Errorf("expected reduce price %v, got %v", tc.expReducePrice, price)
-			}
-
-			if size != tc.expReduceSize {
-				t.Errorf("expected reduce size %v, got %v", tc.expReduceSize, size)
-			}
-		})
-	}
-}
-
-func TestPositionAddFuzz(t *testing.T) {
-	const numTrades = 10000
-	var (
-		totalSize float64
-		sizePrice float64
-		// Comparison tolerance for floating point numbers.
-		sizeTolerance = 0.0001
+	// 1. Without penalty
+	ideal := cfg.IdealAllocation(
+		decimal.NewFromFloat(100.0),
+		decimal.NewFromFloat(10.0),   // baseTotal
+		decimal.NewFromFloat(1000.0), // quoteTotal
+		decimal.Zero,
+		decimal.Zero,
 	)
 
-	eq := func(a, b float64) bool {
-		return math.Abs(a-b) < sizeTolerance
+	// Bids (going down, relative/geometric compounding):
+	// L0: price = 100 - (100 * 0.01) = 99.0
+	//     size = 1000 * 0.5 * 0.2 / 99 = 100 / 99 = 1.010101...
+	// L1: price = 99 - (99 * 0.02) = 97.02
+	//     size = 1000 * 0.5 * 0.3 / 97.02 = 150 / 97.02 = 1.546072...
+	// L2: price = 97.02 - (97.02 * 0.03) = 94.1094
+	//     size = 1000 * 0.5 * 0.5 / 94.1094 = 250 / 94.1094 = 2.656482...
+	if len(ideal.Bids) != 3 {
+		t.Errorf("expected 3 bids, got %d", len(ideal.Bids))
+	} else {
+		expectedBids := []struct {
+			price decimal.Decimal
+			size  decimal.Decimal
+		}{
+			{decimal.NewFromFloat(99.0), decimal.NewFromFloat(100.0).Div(decimal.NewFromFloat(99.0))},
+			{decimal.NewFromFloat(97.02), decimal.NewFromFloat(150.0).Div(decimal.NewFromFloat(97.02))},
+			{decimal.NewFromFloat(94.1094), decimal.NewFromFloat(250.0).Div(decimal.NewFromFloat(94.1094))},
+		}
+		for i, eb := range expectedBids {
+			if !ideal.Bids[i][0].Equal(eb.price) {
+				t.Errorf("bid %d price: expected %s, got %s", i, eb.price, ideal.Bids[i][0])
+			}
+			if !ideal.Bids[i][1].Equal(eb.size) {
+				t.Errorf("bid %d size: expected %s, got %s", i, eb.size, ideal.Bids[i][1])
+			}
+		}
 	}
 
-	p := positionStructure{}
-	for i := 0; i < numTrades; i++ {
-		size := float64(rand.Intn(1000000)-500000.0) / 1000.0
-		price := float64(rand.Intn(100000)) / 1000.0
-
-		totalSize += size
-		sizePrice += size * price
-
-		p.add(price, size)
-
-		if !eq(p.totalSize, totalSize) {
-			t.Errorf("%05d: expected totalSize %v, got %v", i, totalSize, p.totalSize)
+	// Asks (going up, relative/geometric compounding):
+	// L0: price = 100 + (100 * 0.01) = 101.0
+	//     size = 10 * 0.5 * 0.2 = 1.0
+	// L1: price = 101 + (101 * 0.02) = 103.02
+	//     size = 10 * 0.5 * 0.3 = 1.5
+	// L2: price = 103.02 + (103.02 * 0.03) = 106.1106
+	//     size = 10 * 0.5 * 0.5 = 2.5
+	if len(ideal.Asks) != 3 {
+		t.Errorf("expected 3 asks, got %d", len(ideal.Asks))
+	} else {
+		expectedAsks := []struct {
+			price decimal.Decimal
+			size  decimal.Decimal
+		}{
+			{decimal.NewFromFloat(101.0), decimal.NewFromFloat(1.0)},
+			{decimal.NewFromFloat(103.02), decimal.NewFromFloat(1.5)},
+			{decimal.NewFromFloat(106.1106), decimal.NewFromFloat(2.5)},
 		}
-
-		reducePrice := 0.0
-		if !p.long {
-			reducePrice = math.MaxFloat64
+		for i, ea := range expectedAsks {
+			if !ideal.Asks[i][0].Equal(ea.price) {
+				t.Errorf("ask %d price: expected %s, got %s", i, ea.price, ideal.Asks[i][0])
+			}
+			if !ideal.Asks[i][1].Equal(ea.size) {
+				t.Errorf("ask %d size: expected %s, got %s", i, ea.size, ideal.Asks[i][1])
+			}
 		}
-		if eq(totalSize, p.getReduceSize(reducePrice)) {
-			t.Errorf("%05d: expected total internal size %v, got %v", i, totalSize, p.getReduceSize(reducePrice))
+	}
+
+	// 2. With penalties
+	idealWithPenalty := cfg.IdealAllocation(
+		decimal.NewFromFloat(100.0),
+		decimal.NewFromFloat(10.0),
+		decimal.NewFromFloat(1000.0),
+		decimal.NewFromFloat(0.005), // bidPenalty 0.5%
+		decimal.NewFromFloat(0.002), // askPenalty 0.2%
+	)
+
+	// Bids with penalty:
+	// L0: price = 100 - (100 * (0.01 + 0.005)) = 98.5
+	if len(idealWithPenalty.Bids) > 0 {
+		expectedL0Price := decimal.NewFromFloat(98.5)
+		if !idealWithPenalty.Bids[0][0].Equal(expectedL0Price) {
+			t.Errorf("bid with penalty price: expected %s, got %s", expectedL0Price, idealWithPenalty.Bids[0][0])
+		}
+	}
+
+	// Asks with penalty:
+	// L0: price = 100 + (100 * (0.01 + 0.002)) = 101.2
+	if len(idealWithPenalty.Asks) > 0 {
+		expectedL0Price := decimal.NewFromFloat(101.2)
+		if !idealWithPenalty.Asks[0][0].Equal(expectedL0Price) {
+			t.Errorf("ask with penalty price: expected %s, got %s", expectedL0Price, idealWithPenalty.Asks[0][0])
 		}
 	}
 }
 
-func TestOpenInterest(t *testing.T) {
-	cases := []struct {
-		name     string
-		orders   []models.Order
-		expBidOI decimal.Decimal
-		expAskOI decimal.Decimal
-	}{
-		{
-			name:     "empty orders",
-			orders:   []models.Order{},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "one bid order",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-			},
-			expBidOI: decimal.NewFromFloat(1),
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "one ask order",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.NewFromFloat(1),
-		},
-		{
-			name: "multiple orders",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-				{
-					Price:         decimal.NewFromFloat(102),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "3",
-				},
-				{
-					Price:         decimal.NewFromFloat(103),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "4",
-				},
-			},
-			expBidOI: decimal.NewFromFloat(2),
-			expAskOI: decimal.NewFromFloat(2),
-		},
-		{
-			name: "multiple orders with cancel",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusCanceled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusCanceled,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "multiple orders with fill",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusFilled,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "market immediately filled",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(1),
-					Status:        models.OrderStatusFilled,
-					Side:          models.OrderSideSell,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "market immediately filled with partial fill",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPartiallyFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Status:        models.OrderStatusPartiallyFilled,
-					Side:          models.OrderSideSell,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.NewFromFloat(0.5),
-			expAskOI: decimal.NewFromFloat(0.5),
-		},
-		{
-			name: "place then partially fill",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPartiallyFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Status:        models.OrderStatusPartiallyFilled,
-					Side:          models.OrderSideSell,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.NewFromFloat(0.5),
-			expAskOI: decimal.NewFromFloat(0.5),
-		},
-		{
-			name: "partially fill then cancel",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPartiallyFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.5),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusCanceled,
-					ClientOrderID: "1",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "multiple partial fills",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.3),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPartiallyFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(0.7),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPartiallyFilled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					FilledSize:    decimal.NewFromFloat(1.0),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusFilled,
-					ClientOrderID: "1",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
-		{
-			name: "cancel multiple orders",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusCanceled,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusCanceled,
-					ClientOrderID: "2",
-				},
-			},
-			expBidOI: decimal.Zero,
-			expAskOI: decimal.Zero,
-		},
+func TestLadder_ImbalancePenalties(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	d := dummy.NewDummy(ctx, "key", "secret", "", "")
+	d.Generator = func(ctx context.Context, d *dummy.Dummy, ch chan<- models.ExchangeMessage) {
+		<-ctx.Done()
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			oi := newOpenInterest()
-			for _, order := range tc.orders {
-				if err:=oi.observe(order); err != nil {
-					t.Errorf("error observing order: %v", err)
-				}
-			}
+	sym := models.SymbolInfo{
+		Symbol:           "BTCUSDT",
+		Base:             "BTC",
+		Quote:            "USDT",
+		PriceTickSize:    decimal.NewFromFloat(0.01),
+		QuantityTickSize: decimal.NewFromFloat(0.0001),
+		MinQuantity:      decimal.NewFromFloat(0.0001),
+	}
+	d.SetSymbol(sym)
 
-			if !oi.totalBidSize.Equal(tc.expBidOI) {
-				t.Errorf("expected bidOI %s, got %s", tc.expBidOI, oi.totalBidSize)
-			}
+	acc, err := account.NewAccount("test-acc", d)
+	if err != nil {
+		t.Fatalf("failed to create account: %v", err)
+	}
 
-			if !oi.totalAskSize.Equal(tc.expAskOI) {
-				t.Errorf("expected askOI %s, got %s", tc.expAskOI, oi.totalAskSize)
-			}
-		})
+	cfg := LadderConfig{
+		PortfolioAllocation: decimal.NewFromFloat(0.5),
+		LevelsCount:         1,
+		LevelsSpread:        []decimal.Decimal{decimal.NewFromFloat(0.01)},
+		LevelsSize:          []decimal.Decimal{decimal.NewFromFloat(1.0)},
+		LevelsPriceTolerance: []decimal.Decimal{decimal.NewFromFloat(0.005)},
+	}
+
+	ladder := NewLadder(ctx, acc, "BTCUSDT", cfg)
+	if ladder == nil {
+		t.Fatalf("failed to create ladder strategy")
+	}
+
+	// Initially, no open orders, imbalance is 0
+	if !ladder.bidSpreadPenalty().IsZero() {
+		t.Errorf("expected 0 bid penalty, got %s", ladder.bidSpreadPenalty())
+	}
+	if !ladder.askSpreadPenalty().IsZero() {
+		t.Errorf("expected 0 ask penalty, got %s", ladder.askSpreadPenalty())
+	}
+
+	// 1. Bid-heavy imbalance (Total bid size = 10, Total ask size = 5)
+	acc.UpdateOrder(models.Order{
+		Symbol:        "BTCUSDT",
+		ClientOrderID: "bid-o",
+		Side:          models.OrderSideBuy,
+		Size:          decimal.NewFromFloat(10.0),
+		Price:         decimal.NewFromFloat(90.0),
+		Status:        models.OrderStatusPlaced,
+	})
+	acc.UpdateOrder(models.Order{
+		Symbol:        "BTCUSDT",
+		ClientOrderID: "ask-o",
+		Side:          models.OrderSideSell,
+		Size:          decimal.NewFromFloat(5.0),
+		Price:         decimal.NewFromFloat(110.0),
+		Status:        models.OrderStatusPlaced,
+	})
+
+	// Imbalance = (10 - 5) / 10 = 0.5
+	// Penalty = 0.5 * 0.05 = 0.025
+	expectedBidPenalty := decimal.NewFromFloat(0.025)
+	if !ladder.bidSpreadPenalty().Equal(expectedBidPenalty) {
+		t.Errorf("expected bid penalty %s, got %s", expectedBidPenalty, ladder.bidSpreadPenalty())
+	}
+	if !ladder.askSpreadPenalty().IsZero() {
+		t.Errorf("expected ask penalty to be zero, got %s", ladder.askSpreadPenalty())
 	}
 }
 
-func TestSpreadPenalty(t *testing.T) {
-	eq := func(a, b decimal.Decimal) bool {
-		return a.Sub(b).Abs().LessThan(decimal.NewFromFloat(0.0001))
-	}
-	cases := []struct {
-		name          string
-		orders        []models.Order
-		expBidPenalty decimal.Decimal
-		expAskPenalty decimal.Decimal
-	}{
-		{
-			name:          "empty orders",
-			orders:        []models.Order{},
-			expBidPenalty: decimal.Zero,
-			expAskPenalty: decimal.Zero,
-		},
-		{
-			name: "1% bid heavy imbalance",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(101),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(100),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-			},
-			expBidPenalty: decimal.NewFromFloat(0.0005),
-			expAskPenalty: decimal.Zero,
-		},
-		{
-			name: "1% ask heavy imbalance",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(100),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(101),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-			},
-			expBidPenalty: decimal.Zero,
-			expAskPenalty: decimal.NewFromFloat(0.0005),
-		},
-		{
-			name: "balanced orders",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-			},
-			expBidPenalty: decimal.Zero,
-			expAskPenalty: decimal.Zero,
-		},
-		{
-			name: "2% bid heavy imbalance",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(102),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-				{
-					Price:         decimal.NewFromFloat(101),
-					Size:          decimal.NewFromFloat(100),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "2",
-				},
-			},
-			expBidPenalty: decimal.NewFromFloat(0.001),
-			expAskPenalty: decimal.Zero,
-		},
-		{
-			name: "empty asks",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(3),
-					Side:          models.OrderSideBuy,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-			},
-			expBidPenalty: decimal.NewFromFloat(0.05),
-			expAskPenalty: decimal.Zero,
-		},
-		{
-			name: "empty bids",
-			orders: []models.Order{
-				{
-					Price:         decimal.NewFromFloat(100),
-					Size:          decimal.NewFromFloat(1),
-					Side:          models.OrderSideSell,
-					Status:        models.OrderStatusPlaced,
-					ClientOrderID: "1",
-				},
-			},
-			expBidPenalty: decimal.Zero,
-			expAskPenalty: decimal.NewFromFloat(0.05),
-		},
+func TestLadder_GetDesiredOrders_WithPosition(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	d := dummy.NewDummy(ctx, "key", "secret", "", "")
+	d.Generator = func(ctx context.Context, d *dummy.Dummy, ch chan<- models.ExchangeMessage) {
+		<-ctx.Done()
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			oi := newOpenInterest()
+	sym := models.SymbolInfo{
+		Symbol:           "BTCUSDT",
+		Base:             "BTC",
+		Quote:            "USDT",
+		PriceTickSize:    decimal.NewFromFloat(0.01),
+		QuantityTickSize: decimal.NewFromFloat(0.0001),
+		MinQuantity:      decimal.NewFromFloat(0.0001),
+	}
+	d.SetSymbol(sym)
 
-			for _, order := range tc.orders {
-				if err := oi.observe(order); err != nil {
-					t.Errorf("error observing order: %v", err)
+	acc, err := account.NewAccount("test-acc", d)
+	if err != nil {
+		t.Fatalf("failed to create account: %v", err)
+	}
+
+	cfg := LadderConfig{
+		PortfolioAllocation: decimal.NewFromFloat(0.5),
+		LevelsCount:         1,
+		LevelsSpread:        []decimal.Decimal{decimal.NewFromFloat(0.01)},
+		LevelsSize:          []decimal.Decimal{decimal.NewFromFloat(1.0)},
+		LevelsPriceTolerance: []decimal.Decimal{decimal.NewFromFloat(0.005)},
+	}
+
+	ladder := NewLadder(ctx, acc, "BTCUSDT", cfg)
+	if ladder == nil {
+		t.Fatalf("failed to create ladder strategy")
+	}
+
+	// Set balances
+	acc.UpdateBalance("BTC", decimal.NewFromFloat(1.0), decimal.NewFromFloat(1.0), time.Now().UTC())
+	acc.UpdateBalance("USDT", decimal.NewFromFloat(100.0), decimal.NewFromFloat(100.0), time.Now().UTC())
+
+	// Set long position with breakeven at 99.0
+	acc.UpdatePosition("BTCUSDT", decimal.NewFromFloat(1.0), decimal.NewFromFloat(99.0), time.Now().UTC())
+
+	// BBO: Bid 95.0, Ask 96.0, Mid 95.5
+	bbo := models.BBO{
+		Bid:       models.PriceLevel{Price: decimal.NewFromFloat(95.0), Size: decimal.NewFromFloat(1.0)},
+		Ask:       models.PriceLevel{Price: decimal.NewFromFloat(96.0), Size: decimal.NewFromFloat(1.0)},
+		Timestamp: time.Now().UTC(),
+	}
+
+	// Ideal ask at 95.5 + 1% = 96.455.
+	// Since we are long and minReducePrice is 99.0, and 96.455 < 99.0,
+	// ask must be adjusted upward by diff: 99.0 - 96.455 = 2.545.
+	// Adjusted ask price: 96.455 + 2.545 = 99.0.
+	_, asks := ladder.GetDesiredOrders(bbo)
+	if len(asks) != 1 {
+		t.Fatalf("expected 1 ask order, got %d", len(asks))
+	}
+
+	expectedAskPrice := decimal.NewFromFloat(99.0)
+	if !asks[0].Price.Equal(expectedAskPrice) {
+		t.Errorf("expected adjusted ask price %s, got %s", expectedAskPrice, asks[0].Price)
+	}
+}
+
+func TestLadder_See_BBO(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	d := dummy.NewDummy(ctx, "key", "secret", "", "")
+	d.Generator = func(ctx context.Context, d *dummy.Dummy, ch chan<- models.ExchangeMessage) {
+		<-ctx.Done()
+	}
+
+	sym := models.SymbolInfo{
+		Symbol:           "BTCUSDT",
+		Base:             "BTC",
+		Quote:            "USDT",
+		PriceTickSize:    decimal.NewFromFloat(0.01),
+		QuantityTickSize: decimal.NewFromFloat(0.0001),
+		MinQuantity:      decimal.NewFromFloat(0.0001),
+	}
+	d.SetSymbol(sym)
+
+	acc, err := account.NewAccount("test-acc", d)
+	if err != nil {
+		t.Fatalf("failed to create account: %v", err)
+	}
+
+	cfg := LadderConfig{
+		PortfolioAllocation: decimal.NewFromFloat(0.5),
+		LevelsCount:         1,
+		LevelsSpread:        []decimal.Decimal{decimal.NewFromFloat(0.01)},
+		LevelsSize:          []decimal.Decimal{decimal.NewFromFloat(1.0)},
+		LevelsPriceTolerance: []decimal.Decimal{decimal.NewFromFloat(0.05)},
+	}
+
+	ladder := NewLadder(ctx, acc, "BTCUSDT", cfg)
+	if ladder == nil {
+		t.Fatalf("failed to create ladder strategy")
+	}
+
+	// Set balances to allow non-zero orders
+	acc.UpdateBalance("BTC", decimal.NewFromFloat(1.0), decimal.NewFromFloat(1.0), time.Now().UTC())
+	acc.UpdateBalance("USDT", decimal.NewFromFloat(100.0), decimal.NewFromFloat(100.0), time.Now().UTC())
+
+	// BBO message: Bid 90, Ask 100
+	bbo := models.BBO{
+		Bid:       models.PriceLevel{Price: decimal.NewFromFloat(90.0), Size: decimal.NewFromFloat(1.0)},
+		Ask:       models.PriceLevel{Price: decimal.NewFromFloat(100.0), Size: decimal.NewFromFloat(1.0)},
+		Timestamp: time.Now().UTC(),
+	}
+
+	// Trigger BBO processing
+	ladder.See(models.ExchangeMessage{
+		Symbol:   "BTCUSDT",
+		MsgType:  models.MsgTypeBBO,
+		Payload:  bbo,
+		Exchange: dummy.Name,
+	})
+
+	// Wait for async order placements to be processed by account/dummy exchange
+	time.Sleep(100 * time.Millisecond)
+
+	// Validate orders placed in the exchange
+	openOrders, err := d.GetOpenOrders(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatalf("failed to get open orders from dummy exchange: %v", err)
+	}
+
+	// Expected placed orders:
+	// Midprice = 95
+	// Bid = 95 - 1% = 94.05
+	// Ask = 95 + 1% = 95.95
+	if len(openOrders) != 2 {
+		t.Errorf("expected 2 orders on exchange, got %d", len(openOrders))
+	} else {
+		var hasBid, hasAsk bool
+		for _, o := range openOrders {
+			switch o.Side {
+			case models.OrderSideBuy:
+				hasBid = true
+				if !o.Price.Equal(decimal.NewFromFloat(94.05)) {
+					t.Errorf("expected bid price 94.05, got %s", o.Price)
+				}
+			case models.OrderSideSell:
+				hasAsk = true
+				if !o.Price.Equal(decimal.NewFromFloat(95.95)) {
+					t.Errorf("expected ask price 95.95, got %s", o.Price)
 				}
 			}
+		}
+		if !hasBid {
+			t.Errorf("expected bid order to be placed")
+		}
+		if !hasAsk {
+			t.Errorf("expected ask order to be placed")
+		}
+	}
+}
 
-			if !eq(oi.bidSpreadPenalty(), tc.expBidPenalty) {
-				t.Errorf("expected bidPenalty %s, got %s", tc.expBidPenalty, oi.bidSpreadPenalty())
-			}
+func TestLadder_See_OrderLimitSafety(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
 
-			if !eq(oi.askSpreadPenalty(), tc.expAskPenalty) {
-				t.Errorf("expected askPenalty %s, got %s", tc.expAskPenalty, oi.askSpreadPenalty())
-			}
-		})
+	d := dummy.NewDummy(ctx, "key", "secret", "", "")
+	d.Generator = func(ctx context.Context, d *dummy.Dummy, ch chan<- models.ExchangeMessage) {
+		<-ctx.Done()
+	}
+
+	sym := models.SymbolInfo{
+		Symbol:           "BTCUSDT",
+		Base:             "BTC",
+		Quote:            "USDT",
+		PriceTickSize:    decimal.NewFromFloat(0.01),
+		QuantityTickSize: decimal.NewFromFloat(0.0001),
+		MinQuantity:      decimal.NewFromFloat(0.0001),
+	}
+	d.SetSymbol(sym)
+
+	acc, err := account.NewAccount("test-acc", d)
+	if err != nil {
+		t.Fatalf("failed to create account: %v", err)
+	}
+
+	cfg := LadderConfig{
+		PortfolioAllocation: decimal.NewFromFloat(0.5),
+		LevelsCount:         1,
+		LevelsSpread:        []decimal.Decimal{decimal.NewFromFloat(0.01)},
+		LevelsSize:          []decimal.Decimal{decimal.NewFromFloat(1.0)},
+		LevelsPriceTolerance: []decimal.Decimal{decimal.NewFromFloat(0.005)},
+	}
+
+	ladder := NewLadder(ctx, acc, "BTCUSDT", cfg)
+	if ladder == nil {
+		t.Fatalf("failed to create ladder strategy")
+	}
+
+	// Pre-populate 25 unique open orders in the exchange and account cache to exceed the limit of 20
+	for i := 0; i < 25; i++ {
+		o := models.Order{
+			Symbol:          "BTCUSDT",
+			ExchangeOrderID: fmt.Sprintf("order-%d", i),
+			ClientOrderID:   fmt.Sprintf("client-order-%d", i),
+			Side:            models.OrderSideBuy,
+			Price:           decimal.NewFromFloat(80.0),
+			Size:            decimal.NewFromFloat(1.0),
+		}
+		d.SetOrder(o)
+		acc.UpdateOrder(o)
+	}
+
+	// Populate balances to allow non-zero order sizing
+	acc.UpdateBalance("BTC", decimal.NewFromFloat(1.0), decimal.NewFromFloat(1.0), time.Now().UTC())
+	acc.UpdateBalance("USDT", decimal.NewFromFloat(100.0), decimal.NewFromFloat(100.0), time.Now().UTC())
+
+	bbo := models.BBO{
+		Bid:       models.PriceLevel{Price: decimal.NewFromFloat(90.0), Size: decimal.NewFromFloat(1.0)},
+		Ask:       models.PriceLevel{Price: decimal.NewFromFloat(100.0), Size: decimal.NewFromFloat(1.0)},
+		Timestamp: time.Now().UTC(),
+	}
+
+	// Trigger BBO message. It should cancel the excessive orders.
+	ladder.See(models.ExchangeMessage{
+		Symbol:   "BTCUSDT",
+		MsgType:  models.MsgTypeBBO,
+		Payload:  bbo,
+		Exchange: dummy.Name,
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	openOrders, err := d.GetOpenOrders(ctx, "BTCUSDT")
+	if err != nil {
+		t.Fatalf("failed to query open orders: %v", err)
+	}
+
+	// Since they were cleared, it should have replaced them with only the 2 new desired orders.
+	if len(openOrders) > 2 {
+		t.Errorf("expected all excessive orders to be cancelled and replaced, but got %d open orders", len(openOrders))
 	}
 }

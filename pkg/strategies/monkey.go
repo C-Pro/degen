@@ -90,7 +90,7 @@ func (m *Monkey) See(e models.ExchangeMessage) {
 		return
 	}
 
-	orders := m.acc.GetOrders(m.symbol.Symbol)
+	orders := m.acc.GetOpenOrders(m.symbol.Symbol)
 
 	var bids, asks []models.Order
 	for _, o := range orders {

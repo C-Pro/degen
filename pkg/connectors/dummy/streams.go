@@ -3,7 +3,7 @@ package dummy
 import (
 	"context"
 	"errors"
-	"math/rand"
+	"math/rand" // nosemgrep
 	"strings"
 	"time"
 
@@ -24,7 +24,9 @@ func (d *Dummy) SubscribeBookTickers(ctx context.Context, symbols []string) erro
 	for i, s := range symbols {
 		streams[i] = strings.ToLower(s) + "@bookTicker"
 	}
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	d.mux.Unlock()
 
 	return nil
 }
@@ -41,56 +43,79 @@ func (d *Dummy) SubscribeBookAggTrades(ctx context.Context, symbols []string) er
 		streams[i] = strings.ToLower(s) + "@aggTrade"
 	}
 
+	d.mux.Lock()
 	d.subscribedStreams = append(d.subscribedStreams, streams...)
+	d.mux.Unlock()
 
 	return nil
 }
 
 func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
+	d.mux.Lock()
+	d.ch = ch
+	d.mux.Unlock()
+	if d.Generator != nil {
+		d.Generator(ctx, d, ch)
+		return
+	}
+
+	d.DefaultRandomGenerator(ctx, ch)
+}
+
+func (d *Dummy) DefaultRandomGenerator(ctx context.Context, ch chan<- models.ExchangeMessage) {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			stream := d.subscribedStreams[rand.Intn(len(d.subscribedStreams))]
-			parts := strings.Split(stream, "@")
-			switch parts[1] {
-			case "bookTicker":
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    parts[0],
-					Timestamp: time.Now().UTC(),
-					MsgType:   models.MsgTypeBBO,
-					Payload: models.BBO{
-						Bid: models.PriceLevel{
-							Price: decimal.NewFromFloat(rand.Float64() * 100),
-							Size:  decimal.NewFromFloat(rand.Float64() * 100),
-						},
-						Ask: models.PriceLevel{
-							Price: decimal.NewFromFloat(rand.Float64() * 100),
-							Size:  decimal.NewFromFloat(rand.Float64() * 100),
-						},
+		case <-ticker.C:
+			d.mux.RLock()
+			numStreams := len(d.subscribedStreams)
+			var stream string
+			if numStreams > 0 {
+				stream = d.subscribedStreams[rand.Intn(numStreams)]
+			}
+			d.mux.RUnlock()
+
+			if stream != "" {
+				parts := strings.Split(stream, "@")
+				switch parts[1] {
+				case "bookTicker":
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    parts[0],
 						Timestamp: time.Now().UTC(),
-					},
-				}
-			case "aggTrade":
-				side := models.OrderSideSell
-				if rand.Float64() < 0.5 {
-					side = models.OrderSideBuy
-				}
-				ch <- models.ExchangeMessage{
-					Exchange:  Name,
-					Symbol:    parts[0],
-					Timestamp: time.Now().UTC(),
-					MsgType:   models.MsgTypePublicTrade,
-					Payload: models.Trade{
-						Price:     decimal.NewFromFloat(rand.Float64() * 100),
-						Size:      decimal.NewFromFloat(rand.Float64() * 100),
+						MsgType:   models.MsgTypeBBO,
+						Payload: models.BBO{
+							Bid: models.PriceLevel{
+								Price: decimal.NewFromFloat(rand.Float64() * 100),
+								Size:  decimal.NewFromFloat(rand.Float64() * 100),
+							},
+							Ask: models.PriceLevel{
+								Price: decimal.NewFromFloat(rand.Float64() * 100),
+								Size:  decimal.NewFromFloat(rand.Float64() * 100),
+							},
+							Timestamp: time.Now().UTC(),
+						},
+					}
+				case "aggTrade":
+					side := models.OrderSideSell
+					if rand.Float64() < 0.5 {
+						side = models.OrderSideBuy
+					}
+					ch <- models.ExchangeMessage{
+						Exchange:  Name,
+						Symbol:    parts[0],
 						Timestamp: time.Now().UTC(),
-						Side:      side,
-					},
+						MsgType:   models.MsgTypePublicTrade,
+						Payload: models.Trade{
+							Price:     decimal.NewFromFloat(rand.Float64() * 100),
+							Size:      decimal.NewFromFloat(rand.Float64() * 100),
+							Timestamp: time.Now().UTC(),
+							Side:      side,
+						},
+					}
 				}
 			}
 
@@ -135,20 +160,35 @@ func (d *Dummy) Listen(ctx context.Context, ch chan<- models.ExchangeMessage) {
 					},
 				}
 			}
-
 		}
 	}
 }
 
 func (d *Dummy) SubscribeUserBalance(ctx context.Context) error {
+	d.mux.Lock()
+	d.subscribedStreams = append(d.subscribedStreams, StreamBalances)
+	d.mux.Unlock()
 	return nil
 }
 
 func (d *Dummy) SubscribeUserOrders(ctx context.Context) error {
+	d.mux.Lock()
+	d.subscribedStreams = append(d.subscribedStreams, StreamOrders)
+	d.mux.Unlock()
 	return nil
 }
 
 func (d *Dummy) SubscribeUserTrades(ctx context.Context) error {
+	d.mux.Lock()
+	d.subscribedStreams = append(d.subscribedStreams, StreamTrades)
+	d.mux.Unlock()
+	return nil
+}
+
+func (d *Dummy) SubscribeUserPositions(ctx context.Context) error {
+	d.mux.Lock()
+	d.subscribedStreams = append(d.subscribedStreams, StreamPositions)
+	d.mux.Unlock()
 	return nil
 }
 

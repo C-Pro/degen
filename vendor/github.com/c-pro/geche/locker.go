@@ -82,6 +82,26 @@ func (tx *Tx[K, V]) Set(key K, value V) {
 	tx.cache.Set(key, value)
 }
 
+func (tx *Tx[K, V]) SetIfPresent(key K, value V) (V, bool) {
+	if atomic.LoadInt32(&tx.unlocked) == 1 {
+		panic("cannot use unlocked transaction")
+	}
+	if !tx.writable {
+		panic("cannot set in read-only transaction")
+	}
+	return tx.cache.SetIfPresent(key, value)
+}
+
+func (tx *Tx[K, V]) SetIfAbsent(key K, value V) (V, bool) {
+	if atomic.LoadInt32(&tx.unlocked) == 1 {
+		panic("cannot use unlocked transaction")
+	}
+	if !tx.writable {
+		panic("cannot set in read-only transaction")
+	}
+	return tx.cache.SetIfAbsent(key, value)
+}
+
 // Get value by key from the underlying sharded cache.
 func (tx *Tx[K, V]) Get(key K) (V, error) {
 	if atomic.LoadInt32(&tx.unlocked) == 1 {
@@ -118,13 +138,28 @@ func (tx *Tx[K, V]) Len() int {
 	return tx.cache.Len()
 }
 
-// ListByPrefix should only be called if underlying cache is KV.
-// Otherwise it will panic.
+// Clear removes all elements from the cache.
+// Will panic if called on RLocked Tx or unlocked Tx.
+func (tx *Tx[K, V]) Clear() {
+	if atomic.LoadInt32(&tx.unlocked) == 1 {
+		panic("cannot use unlocked transaction")
+	}
+	if !tx.writable {
+		panic("cannot clear in read-only transaction")
+	}
+	tx.cache.Clear()
+}
+
+type listerByPrefix[V any] interface {
+	ListByPrefix(prefix string) ([]V, error)
+}
+
+// ListByPrefix should only be called if underlying cache supports ListByPrefix.
 func (tx *Tx[K, V]) ListByPrefix(prefix string) ([]V, error) {
 	if atomic.LoadInt32(&tx.unlocked) == 1 {
 		panic("cannot use unlocked transaction")
 	}
-	kv, ok := any(tx.cache).(*KV[V])
+	kv, ok := any(tx.cache).(listerByPrefix[V])
 	if !ok {
 		panic("cache does not support ListByPrefix")
 	}

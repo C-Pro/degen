@@ -18,10 +18,9 @@ import (
 )
 
 var (
-	theSymbol     = "BTC-IDR"
+	theSymbol     = "WLD-IDR"
 	theAsset      = "IDR"
 	orderNotional = decimal.NewFromFloat(150000)
-	spread        = decimal.NewFromFloat(0.001)
 
 	maxOrderNotional = decimal.NewFromFloat(1000000)
 )
@@ -48,15 +47,6 @@ func main() {
 		}
 	}
 
-	if os.Getenv("SPREAD") != "" {
-		var err error
-		spread, err = decimal.NewFromString(os.Getenv("SPREAD"))
-		if err != nil {
-			log.Printf("failed to parse SPREAD: %v\n", err)
-			return
-		}
-	}
-
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
 		os.Getenv("PINTUPRO_KEY"),
@@ -78,27 +68,92 @@ func main() {
 		log.Printf("failed to init account: %v\n", err)
 		return
 	}
+	bal := acc.GetBalance(theAsset)
+	alloc := decimal.NewFromFloat(1.0)
+	if bal.Total.GreaterThan(decimal.NewFromFloat(500000)) {
+		alloc = decimal.NewFromFloat(500000).Div(bal.Total)
+	}
+
 	ladder := strategies.NewLadder(
 		ctx,
 		acc,
 		theSymbol,
-		orderNotional,
-		spread,
+		strategies.LadderConfig{
+			PortfolioAllocation: alloc,
+			LevelsCount:         3,
+			LevelsSpread: []decimal.Decimal{
+				decimal.NewFromFloat(0.018), // 1.8%
+				decimal.NewFromFloat(0.018), // 1.8%
+				decimal.NewFromFloat(0.018), // 1.8%
+			},
+			LevelsSize: []decimal.Decimal{
+				decimal.NewFromFloat(0.30), // 30% (150k IDR)
+				decimal.NewFromFloat(0.30), // 30% (150k IDR)
+				decimal.NewFromFloat(0.40), // 40% (200k IDR)
+			},
+			LevelsPriceTolerance: []decimal.Decimal{
+				decimal.NewFromFloat(0.008), // 0.8%
+				decimal.NewFromFloat(0.008), // 0.8%
+				decimal.NewFromFloat(0.008), // 0.8%
+			},
+		},
 	)
+	// NewLadder returns nil on failure (e.g. symbol not found, cancel-all
+	// failed). Guard against dereferencing it below. [M3]
+	if ladder == nil {
+		log.Printf("failed to init ladder strategy\n")
+		return
+	}
 
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		if err := http.ListenAndServe(":8080", nil); err != http.ErrServerClosed {
-			log.Printf("HTTP server stopped with error: %v", err)
+		// A bind failure means we would trade with no observability; fail loudly
+		// by triggering shutdown instead of running blind. [L11]
+		if err := http.ListenAndServe(":8080", nil); err != nil && err != http.ErrServerClosed { // nosemgrep
+			log.Printf("metrics HTTP server failed: %v", err)
+			cancel()
 		}
 	}()
 
-	// TODO: refactor to be other way around. Strategy should be in control of the event loop.
-	acc.SetStrategy(ladder.See)
 	if err := acc.Start(ctx); err != nil {
 		log.Printf("failed to start account: %v\n", err)
 		return
 	}
+
+	dispatchDone := make(chan struct{})
+	go func() {
+		defer close(dispatchDone)
+		for {
+			// Stop promptly once the context is cancelled so the strategy does
+			// not place new orders from buffered updates after the shutdown
+			// cancel-all (which would re-orphan live orders). [H9]
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-acc.Updates():
+				if !ok {
+					return
+				}
+				// Recover per message so a single strategy panic skips that
+				// message but the consumer keeps running, instead of dying for
+				// the rest of the process lifetime. [C4/M3]
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("recovered from panic in strategy: %v\n", r)
+						}
+					}()
+					ladder.See(msg)
+				}()
+			}
+		}
+	}()
 	initialBalance := acc.GetBalance(theAsset)
 	log.Printf(
 		`Initial balalance:
@@ -149,4 +204,17 @@ func main() {
 	}()
 
 	<-ctx.Done()
+
+	// Graceful shutdown. First wait for the strategy dispatch goroutine to stop
+	// so no new orders can be placed, THEN cancel resting orders, THEN stop the
+	// account. Otherwise buffered updates could re-place orders after the
+	// cancel-all and leave them unmanaged on the exchange. [H9]
+	<-dispatchDone
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := acc.CancelAllOrders(shutdownCtx, theSymbol); err != nil {
+		log.Printf("failed to cancel all orders on shutdown: %v\n", err)
+	}
+	acc.Stop()
 }

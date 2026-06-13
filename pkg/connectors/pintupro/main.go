@@ -37,7 +37,7 @@ func NewPintuPro(
 	p := &PintuPro{
 		API:         *NewAPI(key, secret, apiBaseURL),
 		ws:          &connectors.WS{},
-		reconnectCh: make(chan any),
+		reconnectCh: make(chan any, 10),
 		wsHandlers:  make(map[string]wsHandlerFunc),
 		idleTimeout: 5 * time.Second,
 		key:         key,

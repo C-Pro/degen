@@ -47,7 +47,7 @@ func WrapAndSign(
 
 func paramsToString(params any) string {
 	v := reflect.ValueOf(params)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 
@@ -108,7 +108,7 @@ func paramsToString(params any) string {
 		})
 		for _, fs := range fields {
 			f := v.Field(fs.i)
-			if f.Kind() == reflect.Ptr {
+			if f.Kind() == reflect.Pointer {
 				f = f.Elem()
 			}
 
@@ -117,7 +117,7 @@ func paramsToString(params any) string {
 		}
 	default:
 		if v.IsValid() {
-			b.WriteString(fmt.Sprintf("%v", v.Interface()))
+			fmt.Fprintf(&b, "%v", v.Interface())
 		}
 	}
 

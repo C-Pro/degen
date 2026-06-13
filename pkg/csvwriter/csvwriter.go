@@ -46,7 +46,9 @@ func (c *CSVFile) WriteRow(row []string) error {
 
 func (c *CSVFile) Flush() error {
 	c.csv.Flush()
-	c.gz.Flush()
+	if err := c.gz.Flush(); err != nil {
+		return err
+	}
 	return c.f.Sync()
 }
 
@@ -152,7 +154,7 @@ func (w *CSVWriter) run(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			w.file.Close()
+			_ = w.file.Close()
 			return
 		case <-ticker.C:
 			if err := w.file.Flush(); err != nil {
