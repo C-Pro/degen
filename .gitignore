@@ -11,3 +11,6 @@ degen.sh
 .antigravitycli
 conductor
 coverage.out
+strategybench
+autoresearch/
+verify_metric.sh
