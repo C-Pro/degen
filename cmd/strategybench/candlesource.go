@@ -14,22 +14,34 @@ import (
 )
 
 const (
-	cacheDir      = "cmd/strategybench/.cache"
-	historyDays   = 730 // sample within the last ~2 years
-	dayFetchTries = 40  // re-sample a different day when one has no data
+	cacheDir = "cmd/strategybench/.cache"
+	// addressableDays is the FIXED span (from windowStart) that seeds are hashed
+	// over. It is generous so the usable window keeps growing for years without
+	// the per-seed mapping ever shifting. Days past "today" are rejected, so the
+	// effective window is [windowStart, yesterday] and widens 1:1 with calendar
+	// time (e.g. ~730 days now, ~830 in 100 days).
+	addressableDays = 3650 // ~10 years
+	dayFetchTries   = 100  // re-sample when a day is in the future or has no data
 )
 
-// randomDayCandleSource maps each seed to a random UTC day within the last ~2
-// years (never the current, incomplete day), downloads that day's candles from
-// pintupro (cached on disk), and re-samples a different day when the sampled one
-// has no data (e.g. the symbol was listed more recently). The result is
-// deterministic per seed, so the benchmark stays reproducible within a run.
+// windowStart is the FIXED absolute lower bound of the sampling window (UTC). It
+// never moves, so cached days never fall out of the window and a given seed
+// always maps to the same absolute day — caches are reused forever, never
+// invalidated. (~730 days before 2026-06-14.)
+var windowStart = time.Date(2024, 6, 14, 0, 0, 0, 0, time.UTC)
+
+// randomDayCandleSource maps each seed to a stable absolute UTC day in
+// [windowStart, yesterday], downloads that day's candles (cached on disk), and
+// re-samples a different day when the sampled one is still in the future or has
+// no data (e.g. the symbol was listed more recently). Deterministic per seed.
 func randomDayCandleSource(api *pintupro.API, symbol, interval string) bench.CandleSource {
-	// Anchor "today" once so every seed in a run shares the same 2-year window.
 	todayStart := time.Now().UTC().Truncate(24 * time.Hour)
 	return func(seed int64) ([]bench.Candle, error) {
 		for attempt := 0; attempt < dayFetchTries; attempt++ {
-			day := sampleDay(todayStart, seed, attempt)
+			day, valid := selectDay(seed, attempt, todayStart)
+			if !valid {
+				continue // future / incomplete current day: re-sample (no fetch)
+			}
 			candles, err := loadOrFetchDay(api, symbol, interval, day)
 			if err != nil {
 				return nil, err
@@ -39,18 +51,20 @@ func randomDayCandleSource(api *pintupro.API, symbol, interval string) bench.Can
 			}
 			// Empty day (no listing / no data yet): try a different day.
 		}
-		return nil, fmt.Errorf("no candle data for %s across %d sampled days in last 2y (seed %d); symbol may be too new",
+		return nil, fmt.Errorf("no candle data for %s across %d sampled days (seed %d); symbol may be too new",
 			symbol, dayFetchTries, seed)
 	}
 }
 
-// sampleDay deterministically maps (seed, attempt) to a UTC-midnight day in
-// [today-2y, yesterday]. daysBack >= 1 guarantees the incomplete current day is
-// never selected.
-func sampleDay(todayStart time.Time, seed int64, attempt int) time.Time {
+// selectDay deterministically maps (seed, attempt) to a UTC-midnight day in the
+// fixed addressable span [windowStart, windowStart+addressableDays). It reports
+// valid=false when the day is not strictly before today (a future or the
+// incomplete current day), so the caller re-samples. The mapping does not depend
+// on the current date, so it is stable as the usable window grows.
+func selectDay(seed int64, attempt int, today time.Time) (time.Time, bool) {
 	rng := rand.New(rand.NewSource(seed*1000003 + int64(attempt)*2654435761))
-	daysBack := 1 + rng.Intn(historyDays) // 1..730
-	return todayStart.AddDate(0, 0, -daysBack)
+	day := windowStart.AddDate(0, 0, rng.Intn(addressableDays))
+	return day, day.Before(today)
 }
 
 // loadOrFetchDay returns one day's candles from the on-disk cache, fetching and

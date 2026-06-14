@@ -275,7 +275,7 @@ func report(res bench.Result, strategy, params string, perSeed bool) {
 
 	switch {
 	case c.CandleSource != nil:
-		fmt.Printf("Price model: candles, per-seed random days within last 2y (%d ticks/bar)\n", c.TicksPerCandle)
+		fmt.Printf("Price model: candles, per-seed random historical days (fixed window, %d ticks/bar)\n", c.TicksPerCandle)
 		fmt.Printf("Sim:        %d runs  seeds %d..%d  inventory balanced 50/50 per day\n",
 			c.Runs, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1)
 	case len(c.Candles) > 0:
