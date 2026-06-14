@@ -46,12 +46,12 @@ func getenvFloat(key string, def float64) float64 {
 
 func loadConfig() config {
 	c := config{
-		symbol:           "WLD-IDR",
+		symbol:           os.Getenv("SYMBOL"),
 		makerFee:         getenvFloat("MAKER_FEE", 0.0012),
 		sellTax:          getenvFloat("SELL_TAX", 0.0021),
 		orderNotional:    getenvFloat("ORDER_NOTIONAL", 150000),
 		maxOrderNotional: getenvFloat("MAX_ORDER_NOTIONAL", 1000000),
-		maxAllocation:    getenvFloat("MAX_NOTIONAL_ALLOCATION", 500000),
+		maxAllocation:    getenvFloat("MAX_NOTIONAL_ALLOCATION", 5000000),
 	}
 	if v := os.Getenv("SYMBOL"); v != "" {
 		c.symbol = v
@@ -157,6 +157,24 @@ func main() {
 
 	cfg := loadConfig()
 	symbol := cfg.symbol
+
+	// Fail fast with an actionable message if required env is missing — the most
+	// common cause is a .env that was sourced (`. .env`) but not exported, so the
+	// child process sees empty values (which surface as a cryptic "malformed ws
+	// or wss URL" from the websocket dialer).
+	var missing []string
+	for _, k := range []string{"SYMBOL", "PINTUPRO_API_BASE_URL", "PINTUPRO_WS_URL"} {
+		if os.Getenv(k) == "" {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		log.Printf("missing required env vars: %v", missing)
+		log.Printf("if using a .env file it must be EXPORTED to the process; run:")
+		log.Printf("  set -a && . ./.env && set +a && ./degen")
+		log.Printf("(plain `. .env` only sets shell variables, not the child environment)")
+		return
+	}
 
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
