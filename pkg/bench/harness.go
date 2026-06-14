@@ -90,7 +90,16 @@ type Config struct {
 	QuantityTick float64 // quantity tick size (must be > 0)
 	MinQuantity  float64 // minimum order quantity
 	BBOLevelSize float64 // displayed size on each generated BBO level (cosmetic)
+
+	// Candles, when non-empty, switches the price model from the single-ticker
+	// random walk to replaying this OHLC history (CandleWalk). Ticker/Ticks are
+	// then derived/ignored; the path has len(Candles)*TicksPerCandle samples.
+	Candles        []Candle
+	TicksPerCandle int // sub-ticks per candle in candle mode (default 30)
 }
+
+// candleMode reports whether the config drives the candle-following price model.
+func (c Config) candleMode() bool { return len(c.Candles) > 0 }
 
 // withDefaults returns a copy of the config with unset structural fields filled
 // in. MakerFee is intentionally not defaulted: a zero value means "no fee".
@@ -123,6 +132,18 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BBOLevelSize == 0 {
 		c.BBOLevelSize = defaultLevelSize
+	}
+	if c.candleMode() {
+		// Derive the missing scenario fields from the candle history.
+		if c.TicksPerCandle == 0 {
+			c.TicksPerCandle = defaultTicksPerCandle
+		}
+		if c.StartPrice == 0 {
+			c.StartPrice = c.Candles[0].Open
+		}
+		if c.Ticker == (Ticker{}) {
+			c.Ticker = aggregateTicker(c.Candles)
+		}
 	}
 	if c.StartBase == 0 {
 		c.StartBase = 1.0
@@ -185,6 +206,25 @@ func (c Config) validate() error {
 	case c.StartBase < 0 || c.StartQuote < 0:
 		return fmt.Errorf("StartBase/StartQuote must be >= 0")
 	}
+
+	for i, cd := range c.Candles {
+		for _, v := range []float64{cd.Open, cd.High, cd.Low, cd.Close} {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				return fmt.Errorf("candle %d has a non-finite OHLC value", i)
+			}
+		}
+		switch {
+		case cd.Low <= 0:
+			return fmt.Errorf("candle %d Low must be > 0, got %v", i, cd.Low)
+		case cd.High < cd.Low:
+			return fmt.Errorf("candle %d High %v < Low %v", i, cd.High, cd.Low)
+		case cd.High < cd.Open || cd.High < cd.Close:
+			return fmt.Errorf("candle %d High %v below Open/Close", i, cd.High)
+		case cd.Low > cd.Open || cd.Low > cd.Close:
+			return fmt.Errorf("candle %d Low %v above Open/Close", i, cd.Low)
+		}
+	}
+
 	return nil
 }
 
@@ -281,8 +321,15 @@ func RunOne(ctx context.Context, cfg Config, seed int64, factory StrategyFactory
 		return RunResult{}, fmt.Errorf("strategy factory returned nil")
 	}
 
-	model := NewPriceModel(cfg)
-	bbos := model.Generate(rand.New(rand.NewSource(seed)))
+	// Pick the price model: replay real candle history when provided, otherwise
+	// the single-ticker calibrated random walk.
+	var gen interface {
+		Generate(rng *rand.Rand) []models.BBO
+	} = NewPriceModel(cfg)
+	if cfg.candleMode() {
+		gen = NewCandleWalk(cfg)
+	}
+	bbos := gen.Generate(rand.New(rand.NewSource(seed)))
 
 	m := &matcher{
 		d:        d,

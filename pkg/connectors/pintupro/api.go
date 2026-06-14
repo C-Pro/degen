@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -389,6 +390,74 @@ func (api *API) Get24hTicker(ctx context.Context, symbol string) (*Ticker24h, er
 		Close:  e.Close,
 		Volume: e.Volume,
 	}, nil
+}
+
+// Candlestick is one OHLC bar from public/get-candlesticks.
+type Candlestick struct {
+	From   int64 // unix seconds, bar start
+	To     int64 // unix seconds, bar end
+	Open   decimal.Decimal
+	High   decimal.Decimal
+	Low    decimal.Decimal
+	Close  decimal.Decimal
+	Volume decimal.Decimal
+}
+
+type candlestickEntry struct {
+	From   int64           `json:"from"`
+	To     int64           `json:"to"`
+	Open   decimal.Decimal `json:"o"`
+	High   decimal.Decimal `json:"h"`
+	Low    decimal.Decimal `json:"l"`
+	Close  decimal.Decimal `json:"c"`
+	Volume decimal.Decimal `json:"v"`
+}
+
+type candlesticksData struct {
+	Symbol       string             `json:"symbol"`
+	Interval     string             `json:"interval"`
+	Candlesticks []candlestickEntry `json:"candlesticks"`
+}
+
+// UnmarshalJSON lets candlesticksData decode through responseMessage's `data`
+// field (which only fills Data pointers implementing json/easyjson Unmarshaler).
+func (d *candlesticksData) UnmarshalJSON(b []byte) error {
+	type alias candlesticksData
+	return json.Unmarshal(b, (*alias)(d))
+}
+
+// GetCandlesticks returns the OHLC history for a symbol at the given interval
+// (e.g. "1m", "15m", "1h"), sorted oldest-first. The endpoint returns a fixed
+// recent window (~100 bars); there is no count parameter.
+func (api *API) GetCandlesticks(ctx context.Context, symbol, interval string) ([]Candlestick, error) {
+	params := url.Values{}
+	params.Set("symbol", symbol)
+	params.Set("interval", interval)
+
+	var data candlesticksData
+	resp := responseMessage{Data: &data}
+	if err := api.call(ctx, "public/get-candlesticks", params, &resp); err != nil {
+		return nil, fmt.Errorf("pintupro.GetCandlesticks: %w", err)
+	}
+
+	if resp.Code != 0 {
+		return nil,
+			fmt.Errorf("pintupro.GetCandlesticks: unexpected code %d %s %s",
+				resp.Code, resp.Message, resp.Reason,
+			)
+	}
+
+	out := make([]Candlestick, 0, len(data.Candlesticks))
+	for _, c := range data.Candlesticks {
+		out = append(out, Candlestick{
+			From: c.From, To: c.To,
+			Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
+		})
+	}
+	// API returns newest-first; replay needs oldest-first.
+	sort.Slice(out, func(i, j int) bool { return out[i].From < out[j].From })
+
+	return out, nil
 }
 
 // easyjson:json
