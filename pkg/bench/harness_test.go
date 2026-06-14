@@ -231,6 +231,40 @@ func TestRun_ValidationErrors(t *testing.T) {
 	}
 }
 
+// TestRun_SellTaxReducesPnL verifies the sell-side withholding (PPh) is applied
+// on top of the maker fee and lowers PnL relative to no tax, on a config that
+// trades enough for sells to matter.
+func TestRun_SellTaxReducesPnL(t *testing.T) {
+	ctx := context.Background()
+	factory := bench.LadderFactory(bench.UniformLadderConfig(3, 0.5, 0.003, 0.006))
+
+	base := ladderCfg()
+	base.Ticker = bench.Ticker{Open: 50000, High: 56000, Low: 45000, Close: 50000}
+	base.Runs = 20
+	base.MakerFee = 0.0012
+
+	noTax := base
+	noTax.SellTaxRate = 0
+	withTax := base
+	withTax.SellTaxRate = 0.0021
+
+	a, err := bench.Run(ctx, noTax, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := bench.Run(ctx, withTax, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.MeanFills < 5 {
+		t.Fatalf("config too quiet to exercise the sell tax: %.1f fills", a.MeanFills)
+	}
+	if b.MeanPnLPct >= a.MeanPnLPct {
+		t.Errorf("sell tax should reduce mean PnL: no-tax=%.3f%% with-tax=%.3f%%", a.MeanPnLPct, b.MeanPnLPct)
+	}
+	t.Logf("mean PnL no-tax=%.3f%% with-tax=%.3f%% (%.0f fills)", a.MeanPnLPct, b.MeanPnLPct, a.MeanFills)
+}
+
 // TestRun_RejectsBadLadderConfig verifies an out-of-range ladder allocation is
 // rejected rather than silently producing over-leveraged PnL.
 func TestRun_RejectsBadLadderConfig(t *testing.T) {

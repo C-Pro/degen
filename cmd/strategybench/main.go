@@ -49,7 +49,8 @@ func main() {
 	flag.IntVar(&cfg.Runs, "runs", 200, "number of seeds to average over")
 	flag.Int64Var(&cfg.BaseSeed, "seed", 1, "base seed (runs use seed, seed+1, ...)")
 
-	flag.Float64Var(&cfg.MakerFee, "fee", 0.001, "maker fee fraction per fill")
+	flag.Float64Var(&cfg.MakerFee, "fee", 0.0012, "maker fee fraction per fill (pintu: 0.12%)")
+	flag.Float64Var(&cfg.SellTaxRate, "sell-tax", 0.0021, "withholding levied on sell proceeds only (pintu PPh: 0.21%)")
 	flag.Float64Var(&cfg.StartBase, "base-bal", 0, "initial base balance (default 1.0)")
 	flag.Float64Var(&cfg.StartQuote, "quote-bal", 0, "initial quote balance (default = price)")
 
@@ -62,8 +63,8 @@ func main() {
 	// Ladder parameters.
 	levels := flag.Int("levels", 3, "ladder: price levels per side")
 	alloc := flag.Float64("alloc", 0.5, "ladder: portfolio allocation [0,1]")
-	levelSpread := flag.Float64("level-spread", 0.010, "ladder: relative spread between levels")
-	tolerance := flag.Float64("tolerance", 0.005, "ladder: re-quote price tolerance")
+	levelSpread := flag.Float64("level-spread", 0.006, "ladder: relative spread between levels")
+	tolerance := flag.Float64("tolerance", 0.008, "ladder: re-quote price tolerance (keep >= level-spread)")
 
 	// Monkey parameters.
 	notional := flag.Float64("notional", 0, "monkey: per-order notional (default = quote-bal*0.1)")
@@ -226,8 +227,8 @@ func report(res bench.Result, strategy, params string, perSeed bool) {
 		c.Symbol, c.Base, c.Quote, c.StartPrice, c.Spread*100)
 	fmt.Printf("24h OHLC:   O=%.6g H=%.6g L=%.6g C=%.6g  -> target swing %.2f%%\n",
 		c.Ticker.Open, c.Ticker.High, c.Ticker.Low, c.Ticker.Close, res.TargetSwingPct)
-	fmt.Printf("Sim:        %d runs x %d ticks  seeds %d..%d  fee=%.3f%%  inventory base=%.6g quote=%.6g\n",
-		c.Runs, c.Ticks, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1, c.MakerFee*100, c.StartBase, c.StartQuote)
+	fmt.Printf("Sim:        %d runs x %d ticks  seeds %d..%d  maker-fee=%.3f%% sell-tax=%.3f%%  inventory base=%.6g quote=%.6g\n",
+		c.Runs, c.Ticks, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1, c.MakerFee*100, c.SellTaxRate*100, c.StartBase, c.StartQuote)
 	fmt.Println()
 	fmt.Printf("  mean realised swing : %.2f%%  (target %.2f%%)\n", res.MeanSwingPct, res.TargetSwingPct)
 	fmt.Printf("  mean fills/run      : %.1f\n", res.MeanFills)

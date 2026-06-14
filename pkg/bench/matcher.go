@@ -30,7 +30,11 @@ type matcher struct {
 	base     string
 	quote    string
 	makerFee decimal.Decimal
-	fills    int
+	// sellTax is an additional levy withheld on the proceeds of sell fills only
+	// (e.g. Indonesia's 0.21% PPh final income tax on crypto disposals). It is
+	// applied on top of makerFee for sells and not at all for buys.
+	sellTax decimal.Decimal
+	fills   int
 }
 
 // match fills every resting order crossed by bbo. It iterates a snapshot of the
@@ -66,6 +70,10 @@ func (m *matcher) match(bbo models.BBO) {
 func (m *matcher) fillOrder(o models.Order) {
 	notional := o.Price.Mul(o.Size)
 	fee := notional.Mul(m.makerFee)
+	// Sells additionally pay the withholding tax on the proceeds.
+	if o.Side == models.OrderSideSell {
+		fee = fee.Add(notional.Mul(m.sellTax))
+	}
 	base := m.acc.GetBalance(m.base)
 	quote := m.acc.GetBalance(m.quote)
 

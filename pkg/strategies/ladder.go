@@ -102,6 +102,25 @@ type Ladder struct {
 	cfg LadderConfig
 }
 
+// warnToleranceBelowSpacing logs a warning when a level's spread exceeds its
+// re-quote tolerance. In that case a resting order is cancelled and re-quoted
+// (chased toward the mid) once the mid moves by tolerance_i, which is a smaller
+// move than the spread the price must travel to reach the order — so the order
+// is moved away before it can ever fill and the level rarely (or never) trades.
+// This is configuration hygiene only; the behaviour is left unchanged.
+func warnToleranceBelowSpacing(symbol string, spread, tolerance []decimal.Decimal) {
+	if len(spread) != len(tolerance) {
+		return
+	}
+	for i := range spread {
+		if spread[i].GreaterThan(tolerance[i]) {
+			log.Printf("ladder %s: level %d spread %s exceeds re-quote tolerance %s; "+
+				"orders at this level may be re-quoted before the price reaches them and rarely fill",
+				symbol, i, spread[i], tolerance[i])
+		}
+	}
+}
+
 func NewLadder(
 	ctx context.Context,
 	acc *account.Account,
@@ -118,6 +137,8 @@ func NewLadder(
 		log.Printf("symbol %s not found\n", symbol)
 		return nil
 	}
+
+	warnToleranceBelowSpacing(symbol, cfg.LevelsSpread, cfg.LevelsPriceTolerance)
 
 	m := &Ladder{
 		acc:    acc,

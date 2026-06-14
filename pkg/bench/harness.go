@@ -81,9 +81,10 @@ type Config struct {
 	Runs     int   // number of seeds to average over
 	BaseSeed int64 // seeds used are BaseSeed, BaseSeed+1, ...
 
-	MakerFee   float64 // maker fee fraction applied to every fill (0 = no fee)
-	StartBase  float64 // initial base-asset balance
-	StartQuote float64 // initial quote-asset balance
+	MakerFee    float64 // maker fee fraction applied to every fill (0 = no fee)
+	SellTaxRate float64 // extra withholding levied on sell proceeds only (e.g. PPh); 0 = none
+	StartBase   float64 // initial base-asset balance
+	StartQuote  float64 // initial quote-asset balance
 
 	PriceTick    float64 // price tick size (must be > 0)
 	QuantityTick float64 // quantity tick size (must be > 0)
@@ -143,6 +144,7 @@ func (c Config) validate() error {
 		v    float64
 	}{
 		{"StartPrice", c.StartPrice}, {"Spread", c.Spread}, {"MakerFee", c.MakerFee},
+		{"SellTaxRate", c.SellTaxRate},
 		{"StartBase", c.StartBase}, {"StartQuote", c.StartQuote},
 		{"PriceTick", c.PriceTick}, {"QuantityTick", c.QuantityTick}, {"MinQuantity", c.MinQuantity},
 		{"Ticker.Open", c.Ticker.Open}, {"Ticker.High", c.Ticker.High},
@@ -168,6 +170,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("Spread must be < 2, got %v", c.Spread)
 	case c.MakerFee < 0 || c.MakerFee >= 1:
 		return fmt.Errorf("MakerFee must be in [0, 1), got %v", c.MakerFee)
+	case c.SellTaxRate < 0 || c.SellTaxRate >= 1:
+		return fmt.Errorf("SellTaxRate must be in [0, 1), got %v", c.SellTaxRate)
 	case c.Ticker.Low <= 0:
 		return fmt.Errorf("Ticker.Low must be > 0, got %v", c.Ticker.Low)
 	case c.Ticker.High < c.Ticker.Low:
@@ -287,6 +291,7 @@ func RunOne(ctx context.Context, cfg Config, seed int64, factory StrategyFactory
 		base:     cfg.Base,
 		quote:    cfg.Quote,
 		makerFee: decimal.NewFromFloat(cfg.MakerFee),
+		sellTax:  decimal.NewFromFloat(cfg.SellTaxRate),
 	}
 
 	minMid, maxMid := math.Inf(1), math.Inf(-1)
