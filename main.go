@@ -2,50 +2,161 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"degen/pkg/account"
+	"degen/pkg/bench"
 	"degen/pkg/connectors/pintupro"
+	"degen/pkg/models"
 	"degen/pkg/strategies"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shopspring/decimal"
 )
 
-var (
-	theSymbol     = "WLD-IDR"
-	theAsset      = "IDR"
-	orderNotional = decimal.NewFromFloat(150000)
+// Operator-configured (env) strategy parameters. The market-fit parameters
+// (level spread, allocation, tolerance) are auto-detected by backtesting the
+// last 7 days of history before trading starts; see tuneLadder.
+type config struct {
+	symbol           string
+	makerFee         float64 // taker/maker fee fraction (pintu: 0.0012)
+	sellTax          float64 // withholding on sells (pintu PPh: 0.0021)
+	orderNotional    float64 // nominal size of a single order, in quote currency
+	maxOrderNotional float64 // hard cap on any single order's notional
+	maxAllocation    float64 // max total capital to deploy to this asset, in quote
+}
 
-	maxOrderNotional = decimal.NewFromFloat(1000000)
-)
+func getenvFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			return f
+		}
+		log.Printf("invalid %s=%q, using default %v", key, v, def)
+	}
+	return def
+}
+
+func loadConfig() config {
+	c := config{
+		symbol:           "WLD-IDR",
+		makerFee:         getenvFloat("MAKER_FEE", 0.0012),
+		sellTax:          getenvFloat("SELL_TAX", 0.0021),
+		orderNotional:    getenvFloat("ORDER_NOTIONAL", 150000),
+		maxOrderNotional: getenvFloat("MAX_ORDER_NOTIONAL", 1000000),
+		maxAllocation:    getenvFloat("MAX_NOTIONAL_ALLOCATION", 500000),
+	}
+	if v := os.Getenv("SYMBOL"); v != "" {
+		c.symbol = v
+	}
+	// NOTIONAL kept as an alias for ORDER_NOTIONAL for backward compatibility.
+	if os.Getenv("ORDER_NOTIONAL") == "" {
+		c.orderNotional = getenvFloat("NOTIONAL", c.orderNotional)
+	}
+	return c
+}
+
+// tuneLadder downloads the last 7 days of 15m candles for the symbol and grid-
+// searches level spread, allocation and tolerance against them (with the
+// configured fees), returning the live ladder config. The detected allocation
+// fraction is applied to the deployable budget (maxAllocation) and capped so no
+// single order exceeds maxOrderNotional.
+func tuneLadder(
+	ctx context.Context,
+	ptu *pintupro.PintuPro,
+	si models.SymbolInfo,
+	balance float64,
+	c config,
+) (strategies.LadderConfig, error) {
+	now := time.Now().Unix()
+	cs, err := ptu.GetCandlesticks(ctx, c.symbol, "15m", now-7*24*3600, now)
+	if err != nil {
+		return strategies.LadderConfig{}, fmt.Errorf("fetch candles: %w", err)
+	}
+	if len(cs) == 0 {
+		return strategies.LadderConfig{}, fmt.Errorf("no candle history for %s", c.symbol)
+	}
+	candles := make([]bench.Candle, len(cs))
+	for i, k := range cs {
+		candles[i] = bench.Candle{
+			Open:  k.Open.InexactFloat64(),
+			High:  k.High.InexactFloat64(),
+			Low:   k.Low.InexactFloat64(),
+			Close: k.Close.InexactFloat64(),
+		}
+	}
+	refPrice := candles[0].Open
+
+	bcfg := bench.Config{
+		Symbol: c.symbol, Base: si.Base, Quote: si.Quote,
+		Spread:         0.0005, // proxy market half-spread
+		MakerFee:       c.makerFee,
+		SellTaxRate:    c.sellTax,
+		PriceTick:      si.PriceTickSize.InexactFloat64(),
+		QuantityTick:   si.QuantityTickSize.InexactFloat64(),
+		MinQuantity:    c.orderNotional / refPrice,
+		TicksPerCandle: 12,
+		Runs:           8,
+		BaseSeed:       1,
+		// Backtest with the deployable budget as the inventory so order sizing
+		// is representative.
+		StartQuote: c.maxAllocation,
+		StartBase:  c.maxAllocation / refPrice,
+	}
+
+	// The strategy/account log on every simulated order/fill; mute during the
+	// backtest sweep, then restore for live trading.
+	log.SetOutput(io.Discard)
+	best, all, err := bench.GridSearch(ctx, candles, bcfg, bench.DefaultTuneGrid())
+	log.SetOutput(os.Stderr)
+	if err != nil {
+		return strategies.LadderConfig{}, err
+	}
+
+	log.Printf("Tuned %s on %d candles (7d, fee=%.3f%% tax=%.3f%%). Grid (best first):",
+		c.symbol, len(candles), c.makerFee*100, c.sellTax*100)
+	for _, r := range all {
+		log.Printf("  spread=%.4g tol=%.4g alloc=%.2g levels=%d -> PnL %+.3f%% (fills %.1f/run)",
+			r.LevelSpread, r.Tolerance, r.Allocation, r.Levels, r.MeanPnLPct, r.MeanFills)
+	}
+
+	// Deploy the detected fraction of the budget; never more than the budget nor
+	// more than 100% of the live balance.
+	liveAlloc := best.Allocation
+	if balance > 0 {
+		liveAlloc = best.Allocation * c.maxAllocation / balance
+	}
+	if liveAlloc > 1 {
+		liveAlloc = 1
+	}
+	// Cap so a single (uniform) level's notional stays under maxOrderNotional.
+	if best.Levels > 0 && balance > 0 {
+		perOrder := liveAlloc * balance / float64(best.Levels)
+		if perOrder > c.maxOrderNotional {
+			liveAlloc *= c.maxOrderNotional / perOrder
+			log.Printf("capped allocation to keep per-order notional <= %.0f", c.maxOrderNotional)
+		}
+	}
+
+	log.Printf("Chosen for %s: spread=%.4g tol=%.4g detected-alloc=%.2g -> live-alloc=%.3g (7d backtest PnL %+.3f%%)",
+		c.symbol, best.LevelSpread, best.Tolerance, best.Allocation, liveAlloc, best.MeanPnLPct)
+
+	return bench.UniformLadderConfig(best.Levels, liveAlloc, best.LevelSpread, best.Tolerance), nil
+}
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if os.Getenv("SYMBOL") != "" {
-		theSymbol = os.Getenv("SYMBOL")
-	}
-
-	if os.Getenv("NOTIONAL") != "" {
-		var err error
-		orderNotional, err = decimal.NewFromString(os.Getenv("NOTIONAL"))
-		if err != nil {
-			log.Printf("failed to parse NOTIONAL: %v\n", err)
-			return
-		}
-
-		if orderNotional.LessThanOrEqual(decimal.Zero) || orderNotional.GreaterThan(maxOrderNotional) {
-			log.Printf("NOTIONAL must be greater than 0 and less than %v\n", maxOrderNotional)
-			return
-		}
-	}
+	cfg := loadConfig()
+	symbol := cfg.symbol
 
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
@@ -68,36 +179,29 @@ func main() {
 		log.Printf("failed to init account: %v\n", err)
 		return
 	}
-	bal := acc.GetBalance(theAsset)
-	alloc := decimal.NewFromFloat(1.0)
-	if bal.Total.GreaterThan(decimal.NewFromFloat(500000)) {
-		alloc = decimal.NewFromFloat(500000).Div(bal.Total)
+
+	symbols, err := acc.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return
+	}
+	si, ok := symbols[symbol]
+	if !ok {
+		log.Printf("symbol %s not found on exchange\n", symbol)
+		return
+	}
+	quoteAsset := si.Quote
+
+	balance := acc.GetBalance(quoteAsset)
+
+	// Auto-detect market-fit parameters by backtesting the last 7 days.
+	ladderCfg, err := tuneLadder(ctx, ptu, si, balance.Total.InexactFloat64(), cfg)
+	if err != nil {
+		log.Printf("failed to tune ladder: %v\n", err)
+		return
 	}
 
-	ladder := strategies.NewLadder(
-		ctx,
-		acc,
-		theSymbol,
-		strategies.LadderConfig{
-			PortfolioAllocation: alloc,
-			LevelsCount:         3,
-			LevelsSpread: []decimal.Decimal{
-				decimal.NewFromFloat(0.018), // 1.8%
-				decimal.NewFromFloat(0.018), // 1.8%
-				decimal.NewFromFloat(0.018), // 1.8%
-			},
-			LevelsSize: []decimal.Decimal{
-				decimal.NewFromFloat(0.30), // 30% (150k IDR)
-				decimal.NewFromFloat(0.30), // 30% (150k IDR)
-				decimal.NewFromFloat(0.40), // 40% (200k IDR)
-			},
-			LevelsPriceTolerance: []decimal.Decimal{
-				decimal.NewFromFloat(0.008), // 0.8%
-				decimal.NewFromFloat(0.008), // 0.8%
-				decimal.NewFromFloat(0.008), // 0.8%
-			},
-		},
-	)
+	ladder := strategies.NewLadder(ctx, acc, symbol, ladderCfg)
 	// NewLadder returns nil on failure (e.g. symbol not found, cancel-all
 	// failed). Guard against dereferencing it below. [M3]
 	if ladder == nil {
@@ -154,7 +258,7 @@ func main() {
 			}
 		}
 	}()
-	initialBalance := acc.GetBalance(theAsset)
+	initialBalance := acc.GetBalance(quoteAsset)
 	log.Printf(
 		`Initial balalance:
 	Total: %s
@@ -163,7 +267,7 @@ func main() {
 		initialBalance.Available.String(),
 	)
 
-	if err := acc.SubscribeBookTickers(ctx, []string{theSymbol}); err != nil {
+	if err := acc.SubscribeBookTickers(ctx, []string{symbol}); err != nil {
 		log.Printf("failed to subscribe tiker: %v\n", err)
 		return
 	}
@@ -190,9 +294,9 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Minute):
-				b := acc.GetBalance(theAsset)
+				b := acc.GetBalance(quoteAsset)
 				if b.UpdatedAt.After(lastChange) {
-					pos := acc.GetPosition(theSymbol)
+					pos := acc.GetPosition(symbol)
 					log.Printf("### Current notinal balance is %v; PnL is %v\n",
 						b.Total,
 						pos.RealizedPnL,
@@ -213,7 +317,7 @@ func main() {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	if err := acc.CancelAllOrders(shutdownCtx, theSymbol); err != nil {
+	if err := acc.CancelAllOrders(shutdownCtx, symbol); err != nil {
 		log.Printf("failed to cancel all orders on shutdown: %v\n", err)
 	}
 	acc.Stop()
