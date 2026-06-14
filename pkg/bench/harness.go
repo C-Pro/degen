@@ -96,7 +96,16 @@ type Config struct {
 	// then derived/ignored; the path has len(Candles)*TicksPerCandle samples.
 	Candles        []Candle
 	TicksPerCandle int // sub-ticks per candle in candle mode (default 30)
+
+	// CandleSource, when non-nil, supplies a distinct OHLC history per seed (so
+	// different runs see different days/regimes). It is resolved once per run in
+	// RunOne; the returned candles drive CandleWalk and the per-run StartPrice
+	// and Ticker are derived from them. Takes precedence over Candles.
+	CandleSource CandleSource
 }
+
+// CandleSource returns the OHLC history a single seeded run should replay.
+type CandleSource func(seed int64) ([]Candle, error)
 
 // candleMode reports whether the config drives the candle-following price model.
 func (c Config) candleMode() bool { return len(c.Candles) > 0 }
@@ -177,8 +186,13 @@ func (c Config) validate() error {
 		}
 	}
 
+	// When a CandleSource is configured but its candles haven't been resolved yet
+	// (the top-level Run validation), StartPrice and Ticker are filled in per-seed
+	// in RunOne, so defer those checks.
+	deferred := c.CandleSource != nil && !c.candleMode()
+
 	switch {
-	case c.StartPrice <= 0:
+	case c.StartPrice <= 0 && !deferred:
 		return fmt.Errorf("StartPrice must be > 0, got %v", c.StartPrice)
 	case c.Ticks < 2:
 		return fmt.Errorf("Ticks must be >= 2, got %d", c.Ticks)
@@ -193,11 +207,11 @@ func (c Config) validate() error {
 		return fmt.Errorf("MakerFee must be in [0, 1), got %v", c.MakerFee)
 	case c.SellTaxRate < 0 || c.SellTaxRate >= 1:
 		return fmt.Errorf("SellTaxRate must be in [0, 1), got %v", c.SellTaxRate)
-	case c.Ticker.Low <= 0:
+	case c.Ticker.Low <= 0 && !deferred:
 		return fmt.Errorf("Ticker.Low must be > 0, got %v", c.Ticker.Low)
-	case c.Ticker.High < c.Ticker.Low:
+	case c.Ticker.High < c.Ticker.Low && !deferred:
 		return fmt.Errorf("Ticker.High (%v) must be >= Ticker.Low (%v)", c.Ticker.High, c.Ticker.Low)
-	case c.Ticker.High/c.Ticker.Low > maxSwingRatio:
+	case !deferred && c.Ticker.High/c.Ticker.Low > maxSwingRatio:
 		return fmt.Errorf("Ticker.High/Low ratio %v exceeds sane cap %v", c.Ticker.High/c.Ticker.Low, maxSwingRatio)
 	case c.PriceTick <= 0:
 		return fmt.Errorf("PriceTick must be > 0, got %v", c.PriceTick)
@@ -262,6 +276,19 @@ type Result struct {
 
 // RunOne executes a single seeded simulation and returns its result.
 func RunOne(ctx context.Context, cfg Config, seed int64, factory StrategyFactory) (RunResult, error) {
+	// Resolve a per-seed candle history first, if a source is configured, so the
+	// derived StartPrice/Ticker below reflect this run's day.
+	if cfg.CandleSource != nil {
+		candles, err := cfg.CandleSource(seed)
+		if err != nil {
+			return RunResult{}, fmt.Errorf("candle source for seed %d: %w", seed, err)
+		}
+		if len(candles) == 0 {
+			return RunResult{}, fmt.Errorf("candle source returned no candles for seed %d", seed)
+		}
+		cfg.Candles = candles
+	}
+
 	cfg = cfg.withDefaults()
 	if err := cfg.validate(); err != nil {
 		return RunResult{}, err

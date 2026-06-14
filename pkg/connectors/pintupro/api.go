@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -427,12 +428,19 @@ func (d *candlesticksData) UnmarshalJSON(b []byte) error {
 }
 
 // GetCandlesticks returns the OHLC history for a symbol at the given interval
-// (e.g. "1m", "15m", "1h"), sorted oldest-first. The endpoint returns a fixed
-// recent window (~100 bars); there is no count parameter.
-func (api *API) GetCandlesticks(ctx context.Context, symbol, interval string) ([]Candlestick, error) {
+// (e.g. "1m", "15m", "1h"), sorted oldest-first. from and to are inclusive UTC
+// unix-second bounds; pass 0 for either to omit it (the endpoint then returns
+// its default recent ~100-bar window). There is no count parameter.
+func (api *API) GetCandlesticks(ctx context.Context, symbol, interval string, from, to int64) ([]Candlestick, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("interval", interval)
+	if from > 0 {
+		params.Set("from", strconv.FormatInt(from, 10))
+	}
+	if to > 0 {
+		params.Set("to", strconv.FormatInt(to, 10))
+	}
 
 	var data candlesticksData
 	resp := responseMessage{Data: &data}

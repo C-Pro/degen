@@ -73,6 +73,7 @@ func main() {
 	priceModel := flag.String("price-model", "walk", "price model: walk (single-ticker random walk) | candles (replay OHLC history)")
 	candleInterval := flag.String("candle-interval", "15m", "candle interval to replay in candles mode (1m,15m,1h,...)")
 	flag.IntVar(&cfg.TicksPerCandle, "ticks-per-candle", 30, "candles mode: sub-ticks generated per candle")
+	randomDays := flag.Bool("random-days", false, "candles mode: each seed replays a random day from the last 2y (cached) instead of the recent window")
 
 	apiURL := flag.String("api-url", "", "pintupro REST base URL for auto-fetching OHLC (default $PINTUPRO_API_BASE_URL or https://api.pintu.pro)")
 
@@ -94,30 +95,37 @@ func main() {
 	defer cancel()
 
 	candles := *priceModel == "candles"
+	if *randomDays && !candles {
+		fmt.Fprintln(os.Stderr, "error: -random-days requires -price-model candles")
+		os.Exit(2)
+	}
 
 	// Fetch from pintupro when a symbol is given and we need data: candle mode
 	// always needs the history; walk mode needs the OHLC if not passed.
 	if set["symbol"] && (candles || !set["high"] || !set["low"]) {
-		if err := fetchFromPintu(ctx, &cfg, set, *apiURL, candles, *candleInterval); err != nil {
+		if err := fetchFromPintu(ctx, &cfg, set, *apiURL, candles, *candleInterval, *randomDays); err != nil {
 			fmt.Fprintf(os.Stderr, "error: failed to fetch %s from pintupro: %v\n", cfg.Symbol, err)
 			fmt.Fprintln(os.Stderr, "hint: pass -high/-low (and -price) explicitly, or check the symbol (e.g. BTC-IDR)")
 			os.Exit(1)
 		}
 	}
 
-	if cfg.StartPrice <= 0 {
-		fmt.Fprintln(os.Stderr, "error: -price is required and must be > 0 (or pass -symbol to auto-fetch)")
-		flag.Usage()
-		os.Exit(2)
-	}
-	if !candles && (cfg.Ticker.High <= 0 || cfg.Ticker.Low <= 0) {
-		fmt.Fprintln(os.Stderr, "error: -high and -low are required (or pass -symbol to auto-fetch them)")
-		flag.Usage()
-		os.Exit(2)
-	}
-	if candles && len(cfg.Candles) == 0 {
-		fmt.Fprintln(os.Stderr, "error: price-model=candles requires -symbol to download candle history")
-		os.Exit(2)
+	// With a per-seed candle source, StartPrice/OHLC are resolved per run.
+	if cfg.CandleSource == nil {
+		if cfg.StartPrice <= 0 {
+			fmt.Fprintln(os.Stderr, "error: -price is required and must be > 0 (or pass -symbol to auto-fetch)")
+			flag.Usage()
+			os.Exit(2)
+		}
+		if !candles && (cfg.Ticker.High <= 0 || cfg.Ticker.Low <= 0) {
+			fmt.Fprintln(os.Stderr, "error: -high and -low are required (or pass -symbol to auto-fetch them)")
+			flag.Usage()
+			os.Exit(2)
+		}
+		if candles && len(cfg.Candles) == 0 {
+			fmt.Fprintln(os.Stderr, "error: price-model=candles requires -symbol to download candle history")
+			os.Exit(2)
+		}
 	}
 
 	factory, params, err := buildFactory(*strategy, cfg, *levels, *alloc, *levelSpread, *tolerance, *notional, *monkeySpread)
@@ -139,7 +147,7 @@ func main() {
 // OHLC from pintupro's public REST API for cfg.Symbol. Fields the user set
 // explicitly (tracked in set) are left untouched. The walk's start price
 // defaults to the last close when -price was not given.
-func fetchFromPintu(ctx context.Context, cfg *bench.Config, set map[string]bool, apiURL string, candles bool, interval string) error {
+func fetchFromPintu(ctx context.Context, cfg *bench.Config, set map[string]bool, apiURL string, candles bool, interval string, randomDays bool) error {
 	if apiURL == "" {
 		apiURL = os.Getenv("PINTUPRO_API_BASE_URL")
 	}
@@ -174,8 +182,14 @@ func fetchFromPintu(ctx context.Context, cfg *bench.Config, set map[string]bool,
 		cfg.MinQuantity = si.MinQuantity.InexactFloat64()
 	}
 
+	if candles && randomDays {
+		// Each seed replays a different cached random day; resolved per run.
+		cfg.CandleSource = randomDayCandleSource(api, cfg.Symbol, interval)
+		return nil
+	}
+
 	if candles {
-		cs, err := api.GetCandlesticks(ctx, cfg.Symbol, interval)
+		cs, err := api.GetCandlesticks(ctx, cfg.Symbol, interval, 0, 0)
 		if err != nil {
 			return fmt.Errorf("get candlesticks: %w", err)
 		}
@@ -256,21 +270,35 @@ func buildFactory(
 func report(res bench.Result, strategy, params string, perSeed bool) {
 	c := res.Config
 	fmt.Printf("Strategy:   %s  [%s]\n", strategy, params)
-	fmt.Printf("Symbol:     %s (%s/%s)  start=%.6g spread=%.4f%%\n",
-		c.Symbol, c.Base, c.Quote, c.StartPrice, c.Spread*100)
-	fmt.Printf("OHLC:       O=%.6g H=%.6g L=%.6g C=%.6g  -> overall swing %.2f%%\n",
-		c.Ticker.Open, c.Ticker.High, c.Ticker.Low, c.Ticker.Close, res.TargetSwingPct)
-	ticks := c.Ticks
-	if len(c.Candles) > 0 {
-		ticks = len(c.Candles) * c.TicksPerCandle
-		fmt.Printf("Price model: candles (%d bars x %d ticks/bar = %d ticks)\n", len(c.Candles), c.TicksPerCandle, ticks)
-	} else {
-		fmt.Printf("Price model: random walk (%d ticks)\n", ticks)
+	fmt.Printf("Symbol:     %s (%s/%s)  spread=%.4f%%  maker-fee=%.3f%% sell-tax=%.3f%%\n",
+		c.Symbol, c.Base, c.Quote, c.Spread*100, c.MakerFee*100, c.SellTaxRate*100)
+
+	switch {
+	case c.CandleSource != nil:
+		fmt.Printf("Price model: candles, per-seed random days within last 2y (%d ticks/bar)\n", c.TicksPerCandle)
+		fmt.Printf("Sim:        %d runs  seeds %d..%d  inventory balanced 50/50 per day\n",
+			c.Runs, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1)
+	case len(c.Candles) > 0:
+		ticks := len(c.Candles) * c.TicksPerCandle
+		fmt.Printf("OHLC:        O=%.6g H=%.6g L=%.6g C=%.6g  -> overall swing %.2f%%\n",
+			c.Ticker.Open, c.Ticker.High, c.Ticker.Low, c.Ticker.Close, res.TargetSwingPct)
+		fmt.Printf("Price model: candles (%d bars x %d = %d ticks, start %.6g)\n",
+			len(c.Candles), c.TicksPerCandle, ticks, c.StartPrice)
+		fmt.Printf("Sim:        %d runs x %d ticks  seeds %d..%d  inventory base=%.6g quote=%.6g\n",
+			c.Runs, ticks, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1, c.StartBase, c.StartQuote)
+	default:
+		fmt.Printf("OHLC:        O=%.6g H=%.6g L=%.6g C=%.6g  -> target swing %.2f%%\n",
+			c.Ticker.Open, c.Ticker.High, c.Ticker.Low, c.Ticker.Close, res.TargetSwingPct)
+		fmt.Printf("Price model: random walk (%d ticks, start %.6g)\n", c.Ticks, c.StartPrice)
+		fmt.Printf("Sim:        %d runs x %d ticks  seeds %d..%d  inventory base=%.6g quote=%.6g\n",
+			c.Runs, c.Ticks, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1, c.StartBase, c.StartQuote)
 	}
-	fmt.Printf("Sim:        %d runs x %d ticks  seeds %d..%d  maker-fee=%.3f%% sell-tax=%.3f%%  inventory base=%.6g quote=%.6g\n",
-		c.Runs, ticks, c.BaseSeed, c.BaseSeed+int64(c.Runs)-1, c.MakerFee*100, c.SellTaxRate*100, c.StartBase, c.StartQuote)
 	fmt.Println()
-	fmt.Printf("  mean realised swing : %.2f%%  (target %.2f%%)\n", res.MeanSwingPct, res.TargetSwingPct)
+	if c.CandleSource != nil {
+		fmt.Printf("  mean daily swing    : %.2f%%\n", res.MeanSwingPct)
+	} else {
+		fmt.Printf("  mean realised swing : %.2f%%  (target %.2f%%)\n", res.MeanSwingPct, res.TargetSwingPct)
+	}
 	fmt.Printf("  mean fills/run      : %.1f\n", res.MeanFills)
 	fmt.Println()
 	fmt.Println("  --- PnL % (portfolio value, base valued at final mid) ---")

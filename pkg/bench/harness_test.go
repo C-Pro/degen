@@ -2,6 +2,7 @@ package bench_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -263,6 +264,52 @@ func TestRun_SellTaxReducesPnL(t *testing.T) {
 		t.Errorf("sell tax should reduce mean PnL: no-tax=%.3f%% with-tax=%.3f%%", a.MeanPnLPct, b.MeanPnLPct)
 	}
 	t.Logf("mean PnL no-tax=%.3f%% with-tax=%.3f%% (%.0f fills)", a.MeanPnLPct, b.MeanPnLPct, a.MeanFills)
+}
+
+// TestRun_CandleSource verifies a per-seed candle source drives each run with
+// its own OHLC history (so StartPrice/Ticker and results differ by seed).
+func TestRun_CandleSource(t *testing.T) {
+	ctx := context.Background()
+	factory := bench.LadderFactory(bench.UniformLadderConfig(3, 0.5, 0.006, 0.008))
+
+	days := map[int64][]bench.Candle{
+		1: {{Open: 100, High: 110, Low: 95, Close: 108}, {Open: 108, High: 112, Low: 104, Close: 106}},
+		2: {{Open: 200, High: 205, Low: 180, Close: 185}, {Open: 185, High: 188, Low: 170, Close: 175}},
+	}
+	cfg := bench.Config{
+		Symbol: "X", Base: "X", Quote: "Y",
+		Spread: 0.001, Runs: 2, BaseSeed: 1, TicksPerCandle: 20,
+		CandleSource: func(seed int64) ([]bench.Candle, error) {
+			c, ok := days[seed]
+			if !ok {
+				return nil, fmt.Errorf("no day for seed %d", seed)
+			}
+			return c, nil
+		},
+	}
+
+	res, err := bench.Run(ctx, cfg, factory)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Runs) != 2 {
+		t.Fatalf("want 2 runs, got %d", len(res.Runs))
+	}
+	if res.Runs[0].SwingPct == res.Runs[1].SwingPct {
+		t.Errorf("expected different per-day swings, both %v", res.Runs[0].SwingPct)
+	}
+	// seed 2's day opens near 200, seed 1's near 100 -> higher initial value.
+	if res.Runs[1].InitialValue <= res.Runs[0].InitialValue {
+		t.Errorf("seed 2 (price ~200) initial value %v should exceed seed 1 (~100) %v",
+			res.Runs[1].InitialValue, res.Runs[0].InitialValue)
+	}
+
+	// An empty source for a seed is an error.
+	bad := cfg
+	bad.CandleSource = func(int64) ([]bench.Candle, error) { return nil, nil }
+	if _, err := bench.Run(ctx, bad, factory); err == nil {
+		t.Error("expected error when candle source returns no candles")
+	}
 }
 
 // TestRun_RejectsBadLadderConfig verifies an out-of-range ladder allocation is
