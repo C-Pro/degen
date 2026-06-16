@@ -70,13 +70,13 @@ func loadConfig() config {
 // single order exceeds maxOrderNotional.
 func tuneLadder(
 	ctx context.Context,
-	ptu *pintupro.PintuPro,
+	api *pintupro.API,
 	si models.SymbolInfo,
 	balance float64,
 	c config,
 ) (strategies.LadderConfig, error) {
 	now := time.Now().Unix()
-	cs, err := ptu.GetCandlesticks(ctx, c.symbol, "15m", now-7*24*3600, now)
+	cs, err := api.GetCandlesticks(ctx, c.symbol, "15m", now-7*24*3600, now)
 	if err != nil {
 		return strategies.LadderConfig{}, fmt.Errorf("fetch candles: %w", err)
 	}
@@ -176,6 +176,44 @@ func main() {
 		return
 	}
 
+	// Tune on historical data with a REST-only client BEFORE opening the trading
+	// websocket. The backtest sweep takes a couple of minutes; if the ws were
+	// already open it would sit idle with no subscriptions, get closed by the
+	// exchange server-side (the idle-reconnect watchdog only runs once there are
+	// subscriptions), and the later Subscribe* calls would fail with "websocket
+	// closed". So we open the ws only when we are ready to subscribe.
+	api := pintupro.NewAPI(
+		os.Getenv("PINTUPRO_KEY"),
+		os.Getenv("PINTUPRO_SECRET"),
+		os.Getenv("PINTUPRO_API_BASE_URL"),
+	)
+	symbolsRef, err := api.GetSymbols(ctx)
+	if err != nil {
+		log.Printf("failed to get symbols: %v\n", err)
+		return
+	}
+	si, ok := symbolsRef[symbol]
+	if !ok {
+		log.Printf("symbol %s not found on exchange\n", symbol)
+		return
+	}
+	quoteAsset := si.Quote
+
+	acctInfo, err := api.GetAccountInfo(ctx)
+	if err != nil {
+		log.Printf("failed to get account info: %v\n", err)
+		return
+	}
+	balance := acctInfo.Balances[quoteAsset].Total.InexactFloat64()
+
+	// Auto-detect market-fit parameters by backtesting the last 7 days.
+	ladderCfg, err := tuneLadder(ctx, api, si, balance, cfg)
+	if err != nil {
+		log.Printf("failed to tune ladder: %v\n", err)
+		return
+	}
+
+	// Now open the trading websocket and wire up the live account/strategy.
 	ptu, err := pintupro.NewPintuPro(
 		ctx,
 		os.Getenv("PINTUPRO_KEY"),
@@ -187,7 +225,6 @@ func main() {
 		log.Printf("failed to init connector: %v\n", err)
 		return
 	}
-
 	if ptu == nil {
 		return
 	}
@@ -195,27 +232,6 @@ func main() {
 	acc, err := account.NewAccount("pintu", ptu)
 	if err != nil {
 		log.Printf("failed to init account: %v\n", err)
-		return
-	}
-
-	symbols, err := acc.GetSymbols(ctx)
-	if err != nil {
-		log.Printf("failed to get symbols: %v\n", err)
-		return
-	}
-	si, ok := symbols[symbol]
-	if !ok {
-		log.Printf("symbol %s not found on exchange\n", symbol)
-		return
-	}
-	quoteAsset := si.Quote
-
-	balance := acc.GetBalance(quoteAsset)
-
-	// Auto-detect market-fit parameters by backtesting the last 7 days.
-	ladderCfg, err := tuneLadder(ctx, ptu, si, balance.Total.InexactFloat64(), cfg)
-	if err != nil {
-		log.Printf("failed to tune ladder: %v\n", err)
 		return
 	}
 

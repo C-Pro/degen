@@ -1,4 +1,4 @@
-.PHONY: all check test lint semgrep docker-build
+.PHONY: all check test lint semgrep docker-build deploy
 
 all: check
 
@@ -27,3 +27,11 @@ osv-scanner:
 
 docker-build:
 	docker build -t degen .
+
+DEPLOY_HOST ?= linode
+
+deploy: docker-build
+	docker save degen | gzip > degen.tar.gz
+	scp degen.tar.gz prometheus.yml $(DEPLOY_HOST):
+	ssh $(DEPLOY_HOST) 'gunzip -f degen.tar.gz && docker load < degen.tar && docker compose up -d && rm -f degen.tar'
+	rm -f degen.tar.gz

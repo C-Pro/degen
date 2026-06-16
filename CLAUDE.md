@@ -87,12 +87,19 @@ Mandatory operator config: `SYMBOL`, `PINTUPRO_API_BASE_URL`, `PINTUPRO_WS_URL`,
 `MAX_ORDER_NOTIONAL`, `MAX_NOTIONAL_ALLOCATION`. Spread/allocation/tolerance are
 **auto-detected**, not configured.
 
-**.env gotcha:** `.env` here is docker-compose format (no `export`). Plain
-`. .env` sets shell vars the child process won't inherit (symptom: cryptic
-`malformed ws or wss URL`). Run with:
+### Running the live bot
+
+Run via **docker-compose** — it builds the image, brings up the bot plus
+Prometheus + Grafana, and reads `.env` natively via `env_file` (no manual
+sourcing/exporting):
 ```
-set -a && . ./.env && set +a && ./degen
+docker compose up --build
 ```
+
+**.env note:** `.env` is docker-compose format (no `export`), which `env_file`
+consumes directly. If you instead run the `degen` binary by hand, the vars must
+be exported or the child process sees empty values (cryptic `malformed ws or
+wss URL`): `set -a && . ./.env && set +a && ./degen`.
 
 ## Build / test / run
 
@@ -100,7 +107,7 @@ set -a && . ./.env && set +a && ./degen
 go build ./...                 # build everything
 go test ./...                  # all tests (bench tests ~15s; pintupro live tests skip without creds)
 make check                     # docker-based lint + test -race + semgrep + osv-scanner (CI parity)
-go build -o degen . && set -a && . ./.env && set +a && ./degen   # run live bot
+docker compose up --build      # run live bot (+ Prometheus + Grafana); reads .env via env_file
 
 # Backtesting CLI:
 go run ./cmd/strategybench -symbol BTC-IDR -strategy ladder -price-model candles
