@@ -1,0 +1,27 @@
+begin;
+
+create table positions(
+  id integer primary key,
+  account_id text not null,
+  venue text not null, --can be exchange, blockchain address, etc.
+  instrument text not null,
+  quote_currency text not null,
+  base_currency text not null,
+  base_size text not null,
+  entry_price text not null,
+  updated_at integer not null
+);
+
+create unique index position_price_idx on positions (
+  account_id, venue, instrument, entry_price
+);
+
+
+update schema_version
+  set is_current = 0
+  where is_current = 1;
+
+insert into schema_version(version, description, is_current)
+  values({{.Version}}, '{{.Description}}', 1);
+
+end;

@@ -24,9 +24,9 @@ func TestCreateSchema(t *testing.T) {
 		t.Fatalf("uexpected error: %v", err)
 	}
 
-	v := 0
-	if err := s.db.QueryRowContext(t.Context(), "select version from schema_version where is_current=1").Scan(&v); err != nil {
-		t.Fatalf("failed to query schema version: %v", err)
+	v, err := s.getSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	if v < 1 {
