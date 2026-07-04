@@ -24,6 +24,10 @@ create unique index position_price_idx on positions (
   account_id, venue, instrument, entry_price
 );
 
+create table venues (
+    name text primary key
+);
+
 -- Insert current schema version. This should be increased every time changes are made
 -- to schema.sql and migration.sql
 insert into schema_version(version, description, is_current)
